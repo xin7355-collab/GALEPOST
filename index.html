@@ -298,6 +298,8 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
   font-size:0.625rem!important;padding:1px 0.375rem}
 .leaflet-control-attribution a{color:var(--fg3)!important}
 .impact{width:100%;min-width:24rem;border-collapse:collapse;font-size:0.8125rem}
+/* 衝擊表多了「實測」欄,窄螢幕上寧可讓它橫向捲動,也不要把欄位擠到看不懂。 */
+.impact.wide{min-width:31rem}
 .impact th{font-size:0.6562rem;letter-spacing:.11em;color:var(--fg3);text-align:left;
   padding:0.5625rem 0.5rem;border-bottom:1px solid var(--edge2);font-weight:700}
 .impact td{padding:0.5625rem 0.5rem;border-bottom:1px solid var(--edge);font-family:var(--mono);color:var(--fg2)}
@@ -796,15 +798,21 @@ function parseLL(v) {
    全部解析出來，依「距台灣遠近」排序後整串回傳，由介面讓人自己挑要看哪顆。
    之前這裡只取 list[0]，等於把其他颱風靜靜丟掉 —— 同一把授權碼、
    同一份資料，看起來卻只有一顆，就是這個原因。                        */
+/* 上一批回應裡「氣象署給了幾顆」與「我們解析出幾顆」。
+   兩個數字不一樣就代表有颱風被我們自己丟掉了 —— 那和「氣象署沒發布」
+   是完全不同的兩件事,以前卻顯示一模一樣的訊息,看不出差別。      */
+let _cwaSeen = { raw: 0, ok: 0 };
+
 async function fetchCWAAll(key) {
   const j = await cwaJson('W-C0034-005', key);
   const wrap = pick(j?.records, 'tropicalCyclones', 'TropicalCyclones') || {};
   const list = pick(wrap, 'tropicalCyclone', 'TropicalCyclone') || [];
-  if (!list.length) return [];
-  return list
+  const out = (Array.isArray(list) ? list : [])
     .map(parseCyclone)
     .filter(Boolean)
     .sort((a, b) => distToTaiwan(a.pos) - distToTaiwan(b.pos));
+  _cwaSeen = { raw: Array.isArray(list) ? list.length : 0, ok: out.length };
+  return out;
 }
 async function fetchCWA(key) {                 // 舊呼叫點沿用：只要最該看的那一顆
   const all = await fetchCWAAll(key);
@@ -906,6 +914,93 @@ async function cwaJson(dataset, key) {
     throw new Error(m);
   } finally { clearTimeout(t); }
 }
+
+/* ── 中央氣象署 O-A0001-001 自動氣象站即時觀測 ──────────────
+   畫面上其他每一個風級都是模型推估出來的,這裡是唯一真的量到的數字。
+   兩者並排看:差一兩級屬正常(模型算的是海面持續風,測站在地面又被地形擋),
+   差很多就代表模型在這個地形下不可信 —— 值班的人要知道不能全信程式。
+   觀測值只放在記憶體,不寫進本機儲存:過期的風速比沒有風速更危險。   */
+let OBS = [], OBS_AT = 0;
+
+// 氣象署用負數當「這項沒測到」的哨兵(-99、-991、-9997…)。
+// 直接 Number() 會把它當成風速 -99 然後算成 0 級,那是無中生有的假資料。
+const obsNum = v => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > -90 ? n : null;
+};
+
+function parseObsStation(o) {
+  // 新版 API 是 Station / WeatherElement(物件),舊版是 location / weatherElement(陣列)。
+  // 兩種都接,因為沒辦法在這個環境對真實回應,少接一種就等於少一半機會。
+  const name = pick(o, 'StationName', 'stationName', 'locationName');
+  if (!name) return null;
+
+  const geo = pick(o, 'GeoInfo', 'geoInfo') || {};
+  let lat = null, lng = null;
+  const coords = pick(geo, 'Coordinates', 'coordinates');
+  if (Array.isArray(coords) && coords.length) {
+    // 一站會同時給 TWD67 與 WGS84 兩組,要挑 WGS84,
+    // 拿錯會整站偏移數百公尺,選最近測站時就會選錯站。
+    const w = coords.find(c => String(pick(c, 'CoordinateName', 'coordinateName') || '')
+      .toUpperCase().includes('WGS84')) || coords[0];
+    lat = obsNum(pick(w, 'StationLatitude', 'stationLatitude'));
+    lng = obsNum(pick(w, 'StationLongitude', 'stationLongitude'));
+  }
+  if (lat == null) lat = obsNum(pick(o, 'lat', 'Latitude', 'latitude'));
+  if (lng == null) lng = obsNum(pick(o, 'lon', 'lng', 'Longitude', 'longitude'));
+  if (lat == null || lng == null) return null;
+
+  let wind = null, gust = null, dir = null;
+  const we = pick(o, 'WeatherElement', 'weatherElement');
+  if (Array.isArray(we)) {
+    const g = k => {
+      const e = we.find(x => String(pick(x, 'elementName', 'ElementName') || '') === k);
+      return e ? obsNum(pick(e, 'elementValue', 'ElementValue')) : null;
+    };
+    wind = g('WDSD'); gust = g('H_FX'); dir = g('WDIR');
+  } else if (we && typeof we === 'object') {
+    wind = obsNum(pick(we, 'WindSpeed', 'windSpeed'));
+    dir = obsNum(pick(we, 'WindDirection', 'windDirection'));
+    const gi = pick(we, 'GustInfo', 'gustInfo');
+    if (gi) gust = obsNum(pick(gi, 'PeakGustSpeed', 'peakGustSpeed'));
+  }
+  if (wind == null && gust == null) return null;   // 沒有風的測站對這裡沒有用
+
+  const ot = pick(o, 'ObsTime', 'obsTime', 'time') || {};
+  const at = Date.parse(pick(ot, 'DateTime', 'dateTime', 'obsTime') || '');
+
+  return {
+    name: String(name).trim(),
+    id: String(pick(o, 'StationId', 'stationId') || ''),
+    pos: { lat, lng }, wind, gust, dir,
+    at: Number.isFinite(at) ? at : 0,
+    county: String(pick(geo, 'CountyName', 'countyName') || ''),
+  };
+}
+
+async function fetchObs(key) {
+  const j = await cwaJson('O-A0001-001', key);
+  const list = pick(j && j.records ? j.records : {}, 'Station', 'station', 'location', 'Location');
+  return Array.isArray(list) ? list.map(parseObsStation).filter(Boolean) : [];
+}
+
+/* 最近的測站超過這個距離就不採用。
+   隔著一座山的測站量到的風,跟站台現場沒有關係,擺出來只會誤導。 */
+const OBS_MAX_KM = 60;
+
+function nearestObs(st) {
+  if (!OBS.length || !Number.isFinite(st.lat) || !Number.isFinite(st.lng)) return null;
+  const p = { lat: st.lat, lng: st.lng };
+  let best = null;
+  for (const o of OBS) {
+    const km = distKm(p, o.pos);
+    if (!best || km < best.km) best = { o, km };
+  }
+  return best && best.km <= OBS_MAX_KM ? best : null;
+}
+
+// 實測風級。只有陣風沒有持續風時不換算 —— 陣風當成持續風會高估。
+const obsBf = ob => (ob && ob.o.wind != null) ? ms2bf(ob.o.wind) : null;
 
 /* ── 中央氣象署 W-C0034-001 颱風警報單 ─────────────────────
    風哨自己算的發布時機是模式推估；氣象署實際發布的警報單才是單位行動的依據。
@@ -1148,10 +1243,17 @@ async function loadTyphoon(manual) {
   renderTyphoon({ loading: true });
   const key = (DB.cfg.cwaKey || '').trim();
   let note = '';
+  // 實測觀測跟颱風路徑是兩件事:就算氣象署現在沒有任何颱風,
+  // 「現在各站台幾級風」還是要看得到。所以先發出去,不等路徑的結果。
+  const obsP = key
+    ? fetchObs(key).then(r => { OBS = r; OBS_AT = Date.now(); })
+                   .catch(() => { OBS = []; OBS_AT = 0; })
+    : Promise.resolve().then(() => { OBS = []; OBS_AT = 0; });
   try {
     let all = [];
     // ① 站台端靜態資料：不需要任何人自備授權碼，優先用
     const stat = await fetchStatic();
+    await obsP;                       // 上面已經在跑了,這裡只是收線
     if (stat) {
       DB.ty.warning = stat.warning || null;
       if (stat.typhoons.length) {
@@ -1159,7 +1261,7 @@ async function loadTyphoon(manual) {
       } else {
         // 後端有金鑰、也查得到，只是目前真的沒有颱風 —— 這是明確的答案，
         // 不該再退到 GDACS 去撈出一個地球另一端的熱帶氣旋。
-        clearTyphoon(); renderTyphoon({ none: true }); return;
+        clearTyphoon(); renderTyphoon({ none: true, note }); renderStations(); return;
       }
     }
     // ② 使用者自填授權碼（後端沒設定時的退路）
@@ -1172,7 +1274,15 @@ async function loadTyphoon(manual) {
       if (warnRes.status === 'fulfilled') DB.ty.warning = warnRes.value;
       if (pathRes.status === 'fulfilled') {
         all = pathRes.value || [];
-        if (!all.length) note = '中央氣象署目前沒有發布中的颱風路徑資料，改以 GDACS 全球來源顯示。';
+        if (!all.length) {
+          // 氣象署給了資料但一顆都解析不出來,跟氣象署沒發布是兩回事。
+          // 講成一樣的話,等於把自己的 bug 說成別人沒資料。
+          note = _cwaSeen.raw > 0
+            ? `中央氣象署回傳了 ${_cwaSeen.raw} 筆熱帶氣旋，但風哨一筆都解析不出來`
+              + '（欄位格式可能與預期不符，這是程式的問題，不是氣象署沒發布）。'
+              + '暫時改以 GDACS 全球來源顯示。'
+            : '中央氣象署目前沒有發布中的颱風路徑資料，改以 GDACS 全球來源顯示。';
+        }
       } else {
         note = `中央氣象署查詢失敗（${pathRes.reason && pathRes.reason.message}），改以 GDACS 全球來源顯示。`;
       }
@@ -1184,7 +1294,7 @@ async function loadTyphoon(manual) {
       const g = await fetchGDACS();
       if (g) all = [g];
     }
-    if (!all.length) { clearTyphoon(); renderTyphoon({ none: true }); return; }
+    if (!all.length) { clearTyphoon(); renderTyphoon({ none: true, note }); renderStations(); return; }
 
     DB.ty.list = all;
     DB.ty.data = selectTyphoon(all, DB.ty.sel);
@@ -1336,6 +1446,10 @@ function stationCard(s, imp, i, total) {
   if (s.hum != null) meta.push(`濕度 ${s.hum}%`);
   if (imp) meta.push(`距中心 ${imp.km} km`);
   else if (!Number.isFinite(s.lat)) meta.push('未設座標');
+  // 實測擺在推估旁邊。這是畫面上唯一一個不是算出來的數字,要標明是哪一站量的,
+  // 否則看的人無從判斷這個數字能不能代表自己的現場。
+  const ob = nearestObs(s), obf = obsBf(ob);
+  if (obf != null) meta.push(`實測 ${bfLabel(obf)}　${esc(ob.o.name)} ${Math.round(ob.km)} km`);
   return `<article class="st" data-id="${s.id}">
     <div class="st-main">
       <i class="st-i" style="background:${S_COL[s.status]}"></i>
@@ -1418,16 +1532,32 @@ function moveStation(id, d) {
 /* ═══ 颱風頁 ═══════════════════════════════════════════ */
 let MAP = null, MLAYER = null;
 
+/* 上一次載入的說明文字。
+   以前 note 是逐次傳進來的,切個頁籤重畫一次就沒了 —— 使用者只剩下
+   「尚未取得颱風資料」這句話,完全看不出到底是氣象署沒發布、
+   還是我們自己把資料弄丟了。留著,直到下一次載入把它換掉。      */
+let _loadNote = '';
+
 function renderTyphoon(o) {
   o = o || {};
+  if (o.note !== undefined) _loadNote = o.note || '';
+  const note = _loadNote;
   const msg = $('#tyMsg'), body = $('#tyBody');
   const ty = DB.ty.data;
   if (o.loading) { msg.innerHTML = '<div class="msg i">查詢中…</div>'; return; }
   if (o.error) { msg.innerHTML = `<div class="msg e">連線失敗：${esc(o.error)}。站台管制與回報產出不需要網路，可照常使用。</div>`; return; }
-  if (o.none) { msg.innerHTML = '<div class="msg i">目前查無活動中的熱帶氣旋。</div>'; body.innerHTML = ''; $('#map').style.display = 'none'; $('#tyImpact').innerHTML = ''; $('#tyFc').innerHTML = ''; return; }
+  if (o.none) {
+    // 什麼都沒查到的時候,原因反而最該講出來 ——
+    // 以前這裡把 note 丟掉,結果「氣象署沒發布」和「我們把資料解析壞了」
+    // 都只會顯示同一句「查無熱帶氣旋」。
+    msg.innerHTML = (note ? `<div class="msg w">${esc(note)}</div>` : '')
+      + '<div class="msg i">目前查無活動中的熱帶氣旋。</div>';
+    body.innerHTML = ''; $('#map').style.display = 'none';
+    $('#tyImpact').innerHTML = ''; $('#tyFc').innerHTML = ''; return;
+  }
 
   if (!ty) {
-    msg.innerHTML = '';
+    msg.innerHTML = note ? `<div class="msg w">${esc(note)}</div>` : '';
     body.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 12c0-3 2.5-5 5.5-5S22 9 20 11c-3 3-8 1-8 1zM12 12c0 3-2.5 5-5.5 5S2 15 4 13c3-3 8-1 8-1z"/></svg>
       <b>尚未取得颱風資料</b>
@@ -1439,7 +1569,7 @@ function renderTyphoon(o) {
     paintBfBar(null); return;
   }
 
-  msg.innerHTML = (o.note ? `<div class="msg w">${esc(o.note)}</div>` : '') +
+  msg.innerHTML = (note ? `<div class="msg w">${esc(note)}</div>` : '') +
     `<div class="msg i">資料來源：${ty.official ? '中央氣象署 W-C0034-005 颱風路徑潛勢預報' : 'GDACS 全球災害警報系統（非官方，僅觀測位置）'}
      ${DB.ty.at ? `　更新於 ${fmtShort(DB.ty.at)}` : ''}。以下關機、復機與警報時機皆為<b>推估值</b>，正式研判請以中央氣象署警報單為準。</div>`;
 
@@ -1526,11 +1656,12 @@ function renderImpact() {
     .sort((a, b) => (b.i.peak.bf - a.i.peak.bf) || (a.i.km - b.i.km));
   box.innerHTML = `<div class="sec"><h2>站台衝擊預判</h2></div>
   <div class="card" style="padding:0.25rem 0.625rem;margin-bottom:0.375rem;overflow-x:auto">
-   <table class="impact"><tr>
-     <th>站台</th><th>目前</th><th>尖峰</th><th>應完成關機</th><th>預估可復機</th></tr>
+   <table class="impact wide"><tr>
+     <th>站台</th><th>目前推估</th><th>實測</th><th>尖峰</th><th>應完成關機</th><th>預估可復機</th></tr>
    ${rows.map(({ s, i }) => `<tr>
      <td class="nm">${esc(s.name)}<br><span style="font-family:var(--mono);font-size:0.6875rem;color:var(--fg4)">${i.km} km</span></td>
      <td><span class="pill" style="background:${bfColor(i.now.bf)}">${i.now.bf}</span></td>
+     ${obsCell(s, i.now.bf)}
      <td><span class="pill" style="background:${bfColor(i.peak.bf)}">${i.peak.bf}</span><br>
          <span style="font-size:0.6875rem;color:var(--fg4)">${fmtShort(i.peak.t)}</span></td>
      <td>${i.deadline ? fmtShort(i.deadline) : '<span style="color:var(--fg4)">不需關機</span>'}</td>
@@ -1538,8 +1669,37 @@ function renderImpact() {
    </tr>`).join('')}</table></div>
   <p class="hint" style="margin-bottom:0.875rem">
     風級為修正型渦旋模型推估的海面持續風，已計入颱風移動造成的右半圓增強，未計入地形與陸面摩擦，實際岸際風力可能有出入。
+    ${obsHint()}
     門檻：建議關機 ${DB.cfg.bfShut} 級、緊急關機 ${DB.cfg.bfEmerg} 級、可復機 ${DB.cfg.bfResume} 級以下，
     關機作業預留 ${DB.cfg.leadMin} 分鐘。可於設定調整。</p>`;
+}
+
+/* 衝擊表的「實測」欄。
+   實測與推估差 3 級以上就標出來 —— 那不是小數點的差別,
+   而是「模型在這個地形下算不準」的訊號,值班的人必須自己判斷,
+   不能照著程式給的時間關機。差 1、2 級屬正常(海面風 vs 地面風)。 */
+function obsCell(st, estBf) {
+  const ob = nearestObs(st), bf = obsBf(ob);
+  if (bf == null) {
+    return '<td><span style="color:var(--fg4)">—</span></td>';
+  }
+  const gap = Math.abs(bf - estBf);
+  const warn = gap >= 3;
+  return `<td><span class="pill" style="background:${bfColor(bf)}">${bf}</span>`
+    + (warn ? `<b style="display:block;font-size:0.6875rem;color:var(--sb)">差 ${gap} 級</b>` : '')
+    + `<span style="display:block;font-size:0.6875rem;color:var(--fg4)">`
+    + `${esc(ob.o.name)} ${Math.round(ob.km)}km</span></td>`;
+}
+
+function obsHint() {
+  if (!OBS.length) {
+    return '「實測」欄需要中央氣象署授權碼才會有值（自動氣象站 O-A0001-001）；'
+      + '目前沒有取得觀測資料，整欄顯示為 —。';
+  }
+  return `「實測」為自動氣象站量到的十分鐘持續風，取離站台最近且 ${OBS_MAX_KM} 公里內的測站，`
+    + `本次取得 ${OBS.length} 站，觀測時間 ${OBS_AT ? fmtShort(OBS_AT) : '—'}。`
+    + '實測是地面風、推估是海面風，差一至兩級屬正常；'
+    + '<b style="color:var(--sb)">差三級以上會標出來，代表模型在該地形下不可信，請以現場實測為準。</b>';
 }
 
 function renderForecast() {
