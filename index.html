@@ -136,6 +136,10 @@ input[type=text],input[type=number],input[type=password],input[type=datetime-loc
   padding:0.6875rem 0.75rem;width:100%;font-size:max(1rem,16px);color:var(--fg)}
 select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235F8294' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:right 0.6875rem center;background-size:1rem;padding-right:2.25rem}
+/* iOS Safari 的 datetime-local 有自己的內在最小寬度,width:100% 壓不過它,
+   框就會突出卡片外面。min-width:0 才讓它可以縮,appearance:none 去掉原生外框。 */
+input[type=datetime-local]{min-width:0;max-width:100%;
+  -webkit-appearance:none;appearance:none;text-align:left}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
 input::placeholder,textarea::placeholder{color:var(--fg4)}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:0.6875rem}
@@ -879,7 +883,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v10';
+const APP_VER = 'v11';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1722,6 +1726,10 @@ function pickTyphoon(k) {
    ═══════════════════════════════════════════════════════════════ */
 const S_LABEL = { on: '開機', standby: '待機', off: '關機' };
 const S_VERB = { on: '完成開機', standby: '實施待機', off: '完成關機' };
+/* 站台卡上要的是「現在是什麼狀態」,不是「當時做了什麼動作」。
+   還沒有颱風的時候寫「完成開機」,看起來像剛剛執行過復機作業,
+   其實只是一直開著。S_VERB 留給回報稿用 —— 那裡本來就是在講動作。 */
+const S_STATE = { on: '開機中', standby: '待機中', off: '關機中' };
 const S_CSS = { on: 'on', standby: 'sb', off: 'off' };
 const S_COL = { on: 'var(--ok)', standby: 'var(--sb)', off: 'var(--no)' };
 const ICON = {
@@ -1826,7 +1834,7 @@ function stationCard(s, imp, i, total) {
   const t = typeOf(s.type);
   const a = advise(s, imp, DB.cfg);
   const custom = DB.cfg.sort === 'custom';
-  const meta = [`<u>${fmtMD(s.at)} ${fmtHM(s.at)}</u> ${S_VERB[s.status]}`];
+  const meta = [`${S_STATE[s.status]}　<u>${fmtMD(s.at)} ${fmtHM(s.at)}</u> 起`];
   if (s.hum != null) meta.push(`濕度 ${s.hum}%`);
   if (imp) meta.push(`距中心 ${imp.km} km`);
   else if (!Number.isFinite(s.lat)) meta.push('未設座標');
@@ -1977,14 +1985,13 @@ function renderTyphoon(o) {
     ['距台灣', `${dTw} km · 台灣之${dirName(brg)}`],
   ];
   $('#tyPick').innerHTML = typhoonPicker();
-  $('#tyBrief').innerHTML = briefCard();
+  $('#tyBrief').innerHTML = advisoryCard() + briefCard();
   body.innerHTML = `<div class="card ty-hero">
     <div class="glow" style="background:${bfColor(bfV)}"></div>
     <div class="ty-top">${bfBadge(bfV, 'lg')}
       <div class="ty-nm"><b>${esc(ty.name)}</b>
         <span>${ty.en && ty.en !== ty.name ? esc(ty.en) + '　' : ''}<i style="font-style:normal;font-weight:700;color:${bfColor(bfV)}">${TC_FULL[tcClass(ty.vmax)] || ''}</i>　近中心最大風 ${bfLabel(bfV)}</span></div></div>
     <div class="ty-gr">${g.map(([l, v]) => `<div><b>${esc(v)}</b><small>${l}</small></div>`).join('')}</div>
-    ${advisoryStrip()}
   </div>` + warningCard();
 
   drawMap(ty);
@@ -1993,27 +2000,29 @@ function renderTyphoon(o) {
   paintBfBar(Math.max(bfV, ...DB.stations.map(s => (SERIES ? stationImpact(SERIES, s, DB.cfg)?.now.bf : -1) ?? -1)));
 }
 
-/* 豪大雨特報。
-   原本是獨立的卡、每張還掛一次「中央氣象署發布」——
-   使用者反映看不懂那是什麼。特報本來就是氣象署發的,
-   併進颱風卡底部一條，標題寫「氣象署特報」就夠了。          */
-function advisoryStrip() {
+/* 豪大雨特報。放在播報頁 —— 它是寫通報時要抄的材料,
+   跟播報稿擺在一起才順手,也不會把颱風卡撐長。
+   「大雨」常常一次列十幾個縣市,所以等級標籤固定在左邊、
+   地區在右邊自己換行,不要讓長清單把版面推歪。               */
+function advisoryCard() {
   if (!ADV.length) return '';
   const colOf = k => (RAIN_LEVELS.find(L => k.includes(L.name)) || { col: 'var(--sb)' }).col;
   const rows = ADV.map(a => {
     const c = colOf(a.kind);
-    return `<div style="display:flex;gap:0.4375rem;align-items:baseline;flex-wrap:wrap;margin-top:0.375rem">
-      <b style="color:${c};font-size:0.8125rem;flex:0 0 auto;border:1px solid ${c};
-        border-radius:0.25rem;padding:0 0.3125rem">${esc(a.kind)}</b>
-      <span style="font-size:0.8125rem;color:var(--fg2);flex:1 1 7rem;min-width:0;line-height:1.55">
-        ${a.areas.length ? esc(a.areas.join('、')) : '（未列地區）'}</span>
-      ${a.end ? `<span style="font-family:var(--mono);font-size:0.6875rem;color:var(--fg3);
-        flex:0 0 auto">至 ${fmtShort(a.end)}</span>` : ''}
-    </div>`;
+    return `<div style="display:flex;gap:0.5625rem;align-items:flex-start;
+       padding:0.5rem 0;border-top:1px solid var(--edge)">
+      <b style="color:${c};font-size:0.8125rem;flex:0 0 3.75rem;text-align:center;
+        border:1px solid ${c};border-radius:0.25rem;padding:0.125rem 0;
+        line-height:1.35">${esc(a.kind)}</b>
+      <div style="flex:1 1 auto;min-width:0">
+        <div style="font-size:0.8125rem;color:var(--fg2);line-height:1.7">
+          ${a.areas.length ? esc(a.areas.join('、')) : '（未列地區）'}</div>
+        ${a.end ? `<div style="font-family:var(--mono);font-size:0.6875rem;color:var(--fg4);
+          margin-top:0.125rem">有效至 ${fmtShort(a.end)}</div>` : ''}
+      </div></div>`;
   }).join('');
-  return `<div style="border-top:1px solid var(--edge);margin-top:0.75rem;padding-top:0.5rem">
-    <div style="font-size:0.6875rem;letter-spacing:.08em;color:var(--fg3)">氣象署特報</div>
-    ${rows}</div>`;
+  return `<div class="sec"><h2>氣象署特報</h2></div>
+    <div class="card pad" style="margin-bottom:0.75rem">${rows}</div>`;
 }
 
 /* 站台最近雨量站的累積雨量。24 小時是特報分級的主要依據,所以擺第一個。 */
