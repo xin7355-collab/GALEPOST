@@ -6,7 +6,7 @@
  * 氣象資料是唯一的例外 —— 過期的颱風資訊比沒有資訊更危險,
  * 所以 CWA / GDACS 的請求一律直接走網路,絕不快取。
  */
-const CACHE = 'galepost-v4';
+const CACHE = 'galepost-v5';
 const SHELL = [
   './',
   './index.html',
@@ -15,6 +15,13 @@ const SHELL = [
   './assets/icon-512.png',
   './assets/galepost-icon.svg',
   './data/typhoon.json',
+  // Leaflet 收在站內,不再走 CDN:第一次安裝之後離線也開得出地圖。
+  // 圖磚仍然要連網,但地圖框架與控制項本身不會再因為斷線而整個消失。
+  './vendor/leaflet/leaflet.js',
+  './vendor/leaflet/leaflet.css',
+  './vendor/leaflet/images/layers.png',
+  './vendor/leaflet/images/layers-2x.png',
+  './vendor/leaflet/images/marker-icon.png',
 ];
 
 self.addEventListener('install', e => {

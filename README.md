@@ -47,6 +47,7 @@ index.html              整支程式（介面、模型、CWA/GDACS 解析、回�
 sw.js                   離線快取。氣象資料一律不快取——過期的颱風資訊比沒有資訊更危險
 manifest.webmanifest    PWA 資訊
 assets/                 圖示
+vendor/leaflet/         Leaflet 1.9.4（BSD-2-Clause），收在站內不走 CDN
 data/typhoon.json       後端管線的產物（目前為空殼）
 TODO.md                 做到哪裡、還差什麼
 ```
@@ -55,3 +56,9 @@ TODO.md                 做到哪裡、還差什麼
 
 見 [TODO.md](TODO.md)。最要緊的三項：實測風速尚未接（畫面上全部是推估）、
 官方侵襲機率 `W-C0034-003` 尚未引入、以及所有 CWA 解析都還沒對過真實回應。
+
+## 授權
+
+`vendor/leaflet/` 是 [Leaflet](https://leafletjs.com/) 1.9.4，BSD-2-Clause，
+授權條款隨附於 `vendor/leaflet/LICENSE`。收進 repo 是為了離線可用——
+颱風天連不上 CDN 的時候，地圖不該跟著一起消失。

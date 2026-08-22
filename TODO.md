@@ -1,6 +1,6 @@
 # 風哨 GALEPOST — 未完成事項紀錄
 
-最後更新：2026-08-22
+最後更新：2026-08-22（第二輪）
 
 這份是「做到哪裡、還差什麼」的清單，接手的人（或下一次的我）直接照這份往下做。
 分成三區：**卡在外部**（不是程式問題）、**功能待做**、**驗證待補**。
@@ -11,13 +11,11 @@
 
 | 項目 | 狀態 | 要做什麼 |
 |---|---|---|
-| 推送到 GitHub | ✗ 403 被擋 | 這個工作階段的 GitHub App 授權過期，本機已有數個 commit 推不上去。到 claude.ai 重新授權 GitHub，或開新的工作階段後 `git push -u origin claude/taiwan-stock-indicator-8zz-e3o6j0`。程式碼本身都寫好了。 |
-| 後端免金鑰管線 | ✗ 休眠中 | `.github/workflows/typhoon.yml` 與 `scripts/fetch_typhoon.py` 都完成了，但 repo 沒有設 Secret，所以 `data/typhoon.json` 一直是空殼（`hasKey:false`），前端會自動略過它。到 repo → Settings → Secrets → Actions 新增 `CWA_API_KEY` 就會開始運作，使用者端從此不必自己填授權碼。 |
-| 站台網址 | ✗ 未驗證 | GitHub Pages 的部署流程（`.github/workflows/pages.yml`）只掛在預設分支上。推得上去之後才會有網址，目前只能用單檔 HTML。 |
+| 後端免金鑰管線 | ✗ **檔案不在這個 repo** | `scripts/fetch_typhoon.py` 與 `.github/workflows/typhoon.yml` 在上一輪寫過，但沒有隨著程式碼一起帶過來，這個 repo 裡沒有。`data/typhoon.json` 目前是 `hasKey:false` 的空殼，前端會自動略過。要恢復免金鑰路徑，得先把抓取腳本補回來，再到 Settings → Secrets → Actions 設 `CWA_API_KEY`——**只設 Secret 不會有任何作用**。 |
+| 站台網址 | ⏸ 等一個開關 | `.github/workflows/pages.yml` 已就緒，掛在預設分支 `claude/feng-shao-lgn3wn` 上。但 Actions 的權杖開不了 Pages（`Create Pages site failed: Resource not accessible by integration`），要 repo 擁有者到 **Settings → Pages → Source 選 GitHub Actions** 按一次；之後重跑 workflow 就會有網址 `https://xin7355-collab.github.io/GALEPOST/`。 |
 | 中央氣象署實測回應 | ✗ 未對過 | 沙箱連不到 `opendata.cwa.gov.tw`，所有 CWA 解析都是拿仿造的回應測的。第一次接上真的金鑰時，要看一眼「官方警報卡」的內容是否與氣象署網站一致（特別是影響地區與發布時間）。 |
 | CORS 代理 | △ 有退路但未實測 | 瀏覽器直連氣象署常被 CORS 擋。程式已經是「直連失敗 → 改走代理」，代理網址填在設定頁。實際擋不擋、代理格式對不對，要有真環境才知道。 |
-| Leaflet | △ 走 CDN | 地圖程式庫還是從 unpkg 載，沙箱擋著沒法改成內建。離線時第一次開會沒有地圖（其他功能照常）。要完全離線可用，得把 leaflet.js/css 收進 repo 自己放。 |
-| Docker 打包 | ✗ 未驗證 | `site/Dockerfile`、`docker-compose.yml` 寫好了但沙箱沒有 Docker daemon，沒真的 build 過。 |
+| Docker 打包 | ✗ **檔案不在這個 repo** | `site/Dockerfile`、`docker-compose.yml` 同樣沒帶過來。不過站台是純靜態檔，任何靜態伺服器都能服務，Docker 並非必要。 |
 
 ---
 
@@ -54,7 +52,22 @@ Windy 已經嵌進去了，但只是一張獨立的頁籤。可以考慮讓它�
 
 ---
 
-## 三、這次已完成（2026-08-22）
+## 三、這一輪已完成（2026-08-22 第二輪）
+
+- **Leaflet 收進 repo**（`vendor/leaflet/`，1.9.4，取自 npm 官方套件）。
+  以前從 unpkg 載，斷線時地圖整個不見；現在 service worker 一併快取，
+  離線重新整理仍然開得出地圖框架與控制項（圖磚本身還是要連網）。
+  順帶不再為了一張底圖把使用者的瀏覽紀錄送去第三方 CDN。
+- **修掉一個會把錯誤訊息吃掉的競態**：路徑（`W-C0034-005`）與警報單（`W-C0034-001`）
+  是同時發出的兩個請求，卻共用同一個 `_cwaDiag` 變數。警報單成功時會把
+  「路徑抓不到」的原因擦掉，畫面又變回看起來像「氣象署沒發布」——
+  正好是這段診斷本來要防的那件事。改成依資料集分開存放，已用測試重現並確認修好。
+- **Pages 部署流程**（`.github/workflows/pages.yml`）。
+- 補回 `manifest.webmanifest`、`assets/`、`data/typhoon.json`（空殼）。
+
+---
+
+## 四、上一輪已完成（2026-08-22）
 
 - **雙颱、三颱全部顯示**：`fetchCWA` 原本只取 `list[0]`，等於把第一顆以外的颱風靜靜丟掉——
   同一把授權碼、同一份資料，風哨只看得到一顆而別的程式看得到四顆，原因就在這一行。
@@ -67,7 +80,7 @@ Windy 已經嵌進去了，但只是一張獨立的頁籤。可以考慮讓它�
 
 ---
 
-## 四、驗證現況
+## 五、驗證現況
 
 已經在無頭瀏覽器測過並通過的：
 
@@ -75,5 +88,13 @@ Windy 已經嵌進去了，但只是一張獨立的頁籤。可以考慮讓它�
 - 三顆颱風解析、排序、切換、重新更新後選擇不跳掉。
 - 底圖預設衛星影像、三種可切換、切換後記住。
 - 官方警報卡、座標解析、回報產出、字級切換、PWA 安裝與離線，皆為既有測試，這次一併重跑通過。
+
+這一輪補測的：
+
+- 三顆颱風（法拉／哈爾西／고란）解析、依距台灣排序、選擇列切換，整份推算跟著換，無錯誤。
+- 地圖**首次真的畫出來**（Leaflet 收進來之後沙箱也載得動）：圖層切換、縮放、來源標示、
+  路徑線與站台標記都在。
+- Service worker 快取 12 項全中，舊的 v4 快取清掉，離線重新整理後 Leaflet 仍在。
+- 競態修正：路徑失敗 + 警報單成功（後回）時，失敗原因不再被擦掉。
 
 沒辦法在這個環境測的：真實 CWA 回應、真實地圖圖磚畫面、Docker、部署後的網址。
