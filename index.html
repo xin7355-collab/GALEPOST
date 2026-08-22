@@ -299,7 +299,7 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .leaflet-control-attribution a{color:var(--fg3)!important}
 .impact{width:100%;min-width:24rem;border-collapse:collapse;font-size:0.8125rem}
 /* 衝擊表多了「實測」欄,窄螢幕上寧可讓它橫向捲動,也不要把欄位擠到看不懂。 */
-.impact.wide{min-width:31rem}
+.impact.wide{min-width:39rem}
 .impact th{font-size:0.6562rem;letter-spacing:.11em;color:var(--fg3);text-align:left;
   padding:0.5625rem 0.5rem;border-bottom:1px solid var(--edge2);font-weight:700}
 .impact td{padding:0.5625rem 0.5rem;border-bottom:1px solid var(--edge);font-family:var(--mono);color:var(--fg2)}
@@ -724,9 +724,19 @@ const DIR16 = ['北', '北北東', '東北', '東北東', '東', '東南東', '�
   '南', '南南西', '西南', '西南西', '西', '西北西', '西北', '北北西'];
 function dirName(b) { return DIR16[Math.round(((b % 360) + 360) % 360 / 22.5) % 16]; }
 
+// 氣象署 movingDirection 給的是「西北西」這種中文字,但代理或舊版可能回英文縮寫。
+// 播報稿裡直接印出 WNW 唸起來不像話,統一轉成中文。
+const EN2DIR = { N:'北', NNE:'北北東', NE:'東北', ENE:'東北東', E:'東', ESE:'東南東',
+  SE:'東南', SSE:'南南東', S:'南', SSW:'南南西', SW:'西南', WSW:'西南西',
+  W:'西', WNW:'西北西', NW:'西北', NNW:'北北西' };
+const dirZh = v => {
+  const k = String(v == null ? '' : v).trim();
+  return EN2DIR[k.toUpperCase()] || k;
+};
+
 // 中文方位字串轉角度。氣象署 movingDirection 給的是「西北西」這種字。
 const dirDeg = name => {
-  const i = DIR16.indexOf(String(name || '').trim());
+  const i = DIR16.indexOf(dirZh(name));
   return i < 0 ? null : i * 22.5;
 };
 
@@ -1004,8 +1014,10 @@ const obsNum = v => {
   return Number.isFinite(n) && n > -90 ? n : null;
 };
 
-function parseObsStation(o) {
-  // 新版 API 是 Station / WeatherElement(物件),舊版是 location / weatherElement(陣列)。
+/* 測站的共同部分：名稱、代號、座標、觀測時間。
+   自動氣象站(風)與自動雨量站(雨)的外殼一樣,只有量測欄位不同。 */
+function stationBase(o) {
+  // 新版 API 是 Station / GeoInfo,舊版是 location / lat,lon。
   // 兩種都接,因為沒辦法在這個環境對真實回應,少接一種就等於少一半機會。
   const name = pick(o, 'StationName', 'stationName', 'locationName');
   if (!name) return null;
@@ -1025,14 +1037,32 @@ function parseObsStation(o) {
   if (lng == null) lng = obsNum(pick(o, 'lon', 'lng', 'Longitude', 'longitude'));
   if (lat == null || lng == null) return null;
 
+  const ot = pick(o, 'ObsTime', 'obsTime', 'time') || {};
+  const at = Date.parse(pick(ot, 'DateTime', 'dateTime', 'obsTime') || '');
+
+  return {
+    name: String(name).trim(),
+    id: String(pick(o, 'StationId', 'stationId') || ''),
+    pos: { lat, lng },
+    at: Number.isFinite(at) ? at : 0,
+    county: String(pick(geo, 'CountyName', 'countyName') || ''),
+  };
+}
+
+// 舊版把量測放在 weatherElement 陣列裡,用 elementName 找。
+const legacyEl = (arr, k) => {
+  const e = arr.find(x => String(pick(x, 'elementName', 'ElementName') || '') === k);
+  return e ? obsNum(pick(e, 'elementValue', 'ElementValue')) : null;
+};
+
+function parseObsStation(o) {
+  const base = stationBase(o);
+  if (!base) return null;
+
   let wind = null, gust = null, dir = null;
   const we = pick(o, 'WeatherElement', 'weatherElement');
   if (Array.isArray(we)) {
-    const g = k => {
-      const e = we.find(x => String(pick(x, 'elementName', 'ElementName') || '') === k);
-      return e ? obsNum(pick(e, 'elementValue', 'ElementValue')) : null;
-    };
-    wind = g('WDSD'); gust = g('H_FX'); dir = g('WDIR');
+    wind = legacyEl(we, 'WDSD'); gust = legacyEl(we, 'H_FX'); dir = legacyEl(we, 'WDIR');
   } else if (we && typeof we === 'object') {
     wind = obsNum(pick(we, 'WindSpeed', 'windSpeed'));
     dir = obsNum(pick(we, 'WindDirection', 'windDirection'));
@@ -1041,16 +1071,7 @@ function parseObsStation(o) {
   }
   if (wind == null && gust == null) return null;   // 沒有風的測站對這裡沒有用
 
-  const ot = pick(o, 'ObsTime', 'obsTime', 'time') || {};
-  const at = Date.parse(pick(ot, 'DateTime', 'dateTime', 'obsTime') || '');
-
-  return {
-    name: String(name).trim(),
-    id: String(pick(o, 'StationId', 'stationId') || ''),
-    pos: { lat, lng }, wind, gust, dir,
-    at: Number.isFinite(at) ? at : 0,
-    county: String(pick(geo, 'CountyName', 'countyName') || ''),
-  };
+  return Object.assign(base, { wind, gust, dir });
 }
 
 async function fetchObs(key) {
@@ -1059,20 +1080,155 @@ async function fetchObs(key) {
   return Array.isArray(list) ? list.map(parseObsStation).filter(Boolean) : [];
 }
 
+/* ── 中央氣象署 W-C0033-001 天氣特報（豪大雨） ──────────────
+   雨量站是「已經下了多少」,特報是「氣象署認為接下來會下多少」。
+   兩個都要:前者是事實,後者是官方預警,決策依據不同。
+   一樣認不出來就空著,不硬湊。                                      */
+let ADV = [], _advDiag = '';
+
+// 只留跟雨有關的特報,風的部分已經有颱風警報單在管了。
+const RAIN_PHENOM = /(大雨|豪雨|豪大雨)/;
+
+function parseAdvisory(rec) {
+  const hc = pick(rec, 'hazardConditions', 'HazardConditions') || {};
+  let hz = pick(hc, 'hazards', 'Hazards');
+  if (hz && !Array.isArray(hz)) hz = pick(hz, 'hazard', 'Hazard');
+  if (!Array.isArray(hz)) return [];
+
+  const out = [];
+  for (const h of hz) {
+    const info = pick(h, 'info', 'Info') || h;
+    const ph = pick(info, 'phenomena', 'Phenomena', 'phenomenon');
+    const kind = String((ph && typeof ph === 'object' ? pick(ph, 'value', 'Value') : ph) || '').trim();
+    if (!kind || !RAIN_PHENOM.test(kind)) continue;
+
+    const vt = pick(h, 'validTime', 'ValidTime') || {};
+    const start = Date.parse(pick(vt, 'startTime', 'StartTime') || '');
+    const end = Date.parse(pick(vt, 'endTime', 'EndTime') || '');
+
+    // 影響地區可能在 hazard 裡,也可能是這筆 record 本身的 locationName
+    let areas = [];
+    const aa = pick(info, 'affectedAreas', 'AffectedAreas') || {};
+    const loc = pick(aa, 'location', 'Location');
+    if (Array.isArray(loc)) {
+      areas = loc.map(x => String(pick(x, 'locationName', 'LocationName') || '').trim()).filter(Boolean);
+    }
+    if (!areas.length) {
+      const n = pick(rec, 'locationName', 'LocationName');
+      if (n) areas = [String(n).trim()];
+    }
+    out.push({
+      kind, areas,
+      start: Number.isFinite(start) ? start : 0,
+      end: Number.isFinite(end) ? end : 0,
+    });
+  }
+  return out;
+}
+
+async function fetchAdvisory(key) {
+  const j = await cwaJson('W-C0033-001', key);
+  const recs = (j && j.records) || {};
+  let list = pick(recs, 'record', 'Record', 'location', 'Location');
+  if (list && !Array.isArray(list)) list = pick(list, 'record', 'location');
+  if (!Array.isArray(list)) { _advDiag = '天氣特報回應的結構認不出來'; return []; }
+  const now = Date.now();
+  const all = list.flatMap(parseAdvisory)
+    // 已經過期的特報不算數,擺著會讓人以為還在生效
+    .filter(a => !a.end || a.end > now);
+  _advDiag = '';
+  // 同一種特報合併地區,不要一個縣市一張卡
+  const byKind = new Map();
+  for (const a of all) {
+    const k = a.kind;
+    const cur = byKind.get(k) || { kind: k, areas: [], start: a.start, end: a.end };
+    cur.areas = [...new Set([...cur.areas, ...a.areas])];
+    cur.end = Math.max(cur.end, a.end);
+    byKind.set(k, cur);
+  }
+  // 嚴重度由大到小
+  const order = ['超大豪雨', '大豪雨', '豪雨', '大雨'];
+  return [...byKind.values()].sort((x, y) => {
+    const i = order.findIndex(o => x.kind.includes(o)), j = order.findIndex(o => y.kind.includes(o));
+    return (i < 0 ? 99 : i) - (j < 0 ? 99 : j);
+  });
+}
+
+/* ── 中央氣象署 O-A0002-001 自動雨量站 ──────────────────────
+   颱風真正致災的往往是雨,不是風。關機門檻看風,但值班的人要知道
+   現在雨下到什麼程度 —— 尤其山區站台,路先斷的機會比風吹壞設備高。   */
+let RAIN = [], RAIN_AT = 0;
+
+/* 中央氣象署的雨量分級定義（豪大雨特報標準）。
+   由大到小排,第一個達標的就是等級。                                */
+const RAIN_LEVELS = [
+  { name: '超大豪雨', h24: 500, col: '#B0186B' },
+  { name: '大豪雨',   h24: 350, col: '#EF5B4C' },
+  { name: '豪雨',     h24: 200, h3: 100, col: '#EF8A35' },
+  { name: '大雨',     h24: 80,  h1: 40,  col: '#EFC935' },
+];
+
+function rainLevel(r) {
+  if (!r) return null;
+  for (const L of RAIN_LEVELS) {
+    if ((L.h24 != null && r.h24 != null && r.h24 >= L.h24) ||
+        (L.h3  != null && r.h3  != null && r.h3  >= L.h3)  ||
+        (L.h1  != null && r.h1  != null && r.h1  >= L.h1)) return L;
+  }
+  return null;
+}
+
+function parseRainStation(o) {
+  const base = stationBase(o);
+  if (!base) return null;
+
+  let now = null, h1 = null, h3 = null, h24 = null, day = null;
+  const re = pick(o, 'RainfallElement', 'rainfallElement', 'WeatherElement', 'weatherElement');
+  if (Array.isArray(re)) {
+    // 舊版：RAIN 是當日累積,HOUR_x 是時段累積
+    now = legacyEl(re, 'MIN_10'); h1 = legacyEl(re, 'HOUR_1');
+    h3 = legacyEl(re, 'HOUR_3'); h24 = legacyEl(re, 'HOUR_24');
+    day = legacyEl(re, 'RAIN');
+  } else if (re && typeof re === 'object') {
+    const g = (...ks) => {
+      const v = pick(re, ...ks);
+      if (v == null) return null;
+      // 新版每個時段是 {Precipitation: 12.5} 這樣的物件
+      return obsNum(typeof v === 'object' ? pick(v, 'Precipitation', 'precipitation') : v);
+    };
+    now = g('Past10Min', 'past10Min', 'Past10min');
+    h1  = g('Past1hr', 'past1hr', 'Past1Hr');
+    h3  = g('Past3hr', 'past3hr', 'Past3Hr');
+    h24 = g('Past24hr', 'past24hr', 'Past24Hr');
+    day = g('Now', 'now');
+  }
+  if (now == null && h1 == null && h3 == null && h24 == null && day == null) return null;
+
+  return Object.assign(base, { now, h1, h3, h24, day });
+}
+
+async function fetchRain(key) {
+  const j = await cwaJson('O-A0002-001', key);
+  const list = pick(j && j.records ? j.records : {}, 'Station', 'station', 'location', 'Location');
+  return Array.isArray(list) ? list.map(parseRainStation).filter(Boolean) : [];
+}
+
 /* 最近的測站超過這個距離就不採用。
    隔著一座山的測站量到的風,跟站台現場沒有關係,擺出來只會誤導。 */
 const OBS_MAX_KM = 60;
 
-function nearestObs(st) {
-  if (!OBS.length || !Number.isFinite(st.lat) || !Number.isFinite(st.lng)) return null;
+function nearestIn(list, st) {
+  if (!list.length || !Number.isFinite(st.lat) || !Number.isFinite(st.lng)) return null;
   const p = { lat: st.lat, lng: st.lng };
   let best = null;
-  for (const o of OBS) {
+  for (const o of list) {
     const km = distKm(p, o.pos);
     if (!best || km < best.km) best = { o, km };
   }
   return best && best.km <= OBS_MAX_KM ? best : null;
 }
+const nearestObs = st => nearestIn(OBS, st);
+const nearestRain = st => nearestIn(RAIN, st);
 
 // 實測風級。只有陣風沒有持續風時不換算 —— 陣風當成持續風會高估。
 const obsBf = ob => (ob && ob.o.wind != null) ? ms2bf(ob.o.wind) : null;
@@ -1360,9 +1516,16 @@ async function loadTyphoon(manual) {
   // 實測觀測跟颱風路徑是兩件事:就算氣象署現在沒有任何颱風,
   // 「現在各站台幾級風」還是要看得到。所以先發出去,不等路徑的結果。
   const obsP = key
-    ? fetchObs(key).then(r => { OBS = r; OBS_AT = Date.now(); })
-                   .catch(() => { OBS = []; OBS_AT = 0; })
-    : Promise.resolve().then(() => { OBS = []; OBS_AT = 0; PROB = []; });
+    ? Promise.allSettled([fetchObs(key), fetchRain(key), fetchAdvisory(key)])
+        .then(([w, r, a]) => {
+          OBS = w.status === 'fulfilled' ? w.value : [];
+          RAIN = r.status === 'fulfilled' ? r.value : [];
+          ADV = a.status === 'fulfilled' ? a.value : [];
+          OBS_AT = RAIN_AT = Date.now();
+        })
+    : Promise.resolve().then(() => {
+        OBS = []; RAIN = []; ADV = []; PROB = []; OBS_AT = RAIN_AT = 0;
+      });
   try {
     let all = [];
     // ① 站台端靜態資料：不需要任何人自備授權碼，優先用
@@ -1565,6 +1728,13 @@ function stationCard(s, imp, i, total) {
   // 否則看的人無從判斷這個數字能不能代表自己的現場。
   const ob = nearestObs(s), obf = obsBf(ob);
   if (obf != null) meta.push(`實測 ${bfLabel(obf)}　${esc(ob.o.name)} ${Math.round(ob.km)} km`);
+  // 颱風致災常常是雨先出事,山區站台尤其如此,所以雨量跟風擺在一起看。
+  const rb = nearestRain(s);
+  if (rb && rb.o.h24 != null) {
+    const L = rainLevel(rb.o);
+    meta.push(`24 小時雨量 ${Math.round(rb.o.h24)} mm`
+      + (L ? `　<b style="color:${L.col}">${L.name}</b>` : ''));
+  }
   return `<article class="st" data-id="${s.id}">
     <div class="st-main">
       <i class="st-i" style="background:${S_COL[s.status]}"></i>
@@ -1695,17 +1865,17 @@ function renderTyphoon(o) {
     ['中心氣壓', ty.pres ? ty.pres + ' hPa' : '—'],
     ['瞬間陣風', ty.gust ? bfLabel(bfG) : '—'],
     ['七級風半徑', ty.r15 ? ty.r15 + ' km' : '—'],
-    ['移動', ty.mvDir ? `${ty.mvDir} ${ty.mvSpd || '—'} km/h` : '—'],
+    ['移動', ty.mvDir ? `${dirZh(ty.mvDir)} ${ty.mvSpd || '—'} km/h` : '—'],
     ['中心位置', fmtCoord(ty.pos.lat, ty.pos.lng)],
     ['距台灣', `${dTw} km · 台灣之${dirName(brg)}`],
   ];
-  body.innerHTML = typhoonPicker() + probCard(ty) + `<div class="card ty-hero">
+  body.innerHTML = typhoonPicker() + probCard(ty) + advisoryCard() + `<div class="card ty-hero">
     <div class="glow" style="background:${bfColor(bfV)}"></div>
     <div class="ty-top">${bfBadge(bfV, 'lg')}
       <div class="ty-nm"><b>${esc(DB.ty.name || ty.name)}</b>
         <span>${esc(ty.en || '')}　近中心最大風 ${bfLabel(bfV)}　${bfName(bfV)}</span></div></div>
     <div class="ty-gr">${g.map(([l, v]) => `<div><b>${esc(v)}</b><small>${l}</small></div>`).join('')}</div>
-  </div>` + warningCard();
+  </div>` + warningCard() + briefCard();
 
   drawMap(ty);
   renderImpact();
@@ -1737,6 +1907,161 @@ function probCard(ty) {
       取自 W-C0034-003，依機率高低排序，只列前 ${top.length} 個
       （共 ${p.areas.length} 個地區）。這是官方發布的機率，與本程式其他推估值無關。</span>
   </div>`;
+}
+
+/* 豪大雨特報卡。這是氣象署發布的官方預警,和侵襲機率一樣標明官方,
+   跟本機推估分開。颱風致災常常是雨先出事,所以擺在風的資訊前面。 */
+function advisoryCard() {
+  if (!ADV.length) return '';
+  const colOf = k => (RAIN_LEVELS.find(L => k.includes(L.name)) || { col: 'var(--sb)' }).col;
+  return ADV.map(a => {
+    const c = colOf(a.kind);
+    const until = a.end ? `　有效至 ${fmtShort(a.end)}` : '';
+    const areas = a.areas.length
+      ? `<div style="font-size:0.8125rem;color:var(--fg2);margin-top:0.375rem;line-height:1.6">
+           影響地區：${esc(a.areas.join('、'))}</div>`
+      : '';
+    return `<div class="card pad" style="margin-bottom:0.75rem;border-color:${c};
+      background:color-mix(in srgb,${c} 10%,var(--surf))">
+      <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+        <b style="font-size:1.0625rem;color:${c}">${esc(a.kind)}特報</b>
+        <span style="font-size:0.6875rem;color:var(--ok);border:1px solid var(--ok);
+          border-radius:0.25rem;padding:1px 0.375rem">中央氣象署發布</span>
+        <span style="font-size:0.75rem;color:var(--fg3);margin-left:auto">${esc(until.trim())}</span>
+      </div>${areas}</div>`;
+  }).join('');
+}
+
+/* 站台最近雨量站的累積雨量。24 小時是特報分級的主要依據,所以擺第一個。 */
+function rainCell(st) {
+  const rb = nearestRain(st);
+  if (!rb) return '<td><span style="color:var(--fg4)">—</span></td>';
+  const r = rb.o, L = rainLevel(r);
+  const v = n => n == null ? '—' : (n < 10 ? n.toFixed(1) : Math.round(n));
+  return `<td><span style="font-family:var(--mono);font-weight:700;color:${L ? L.col : 'var(--fg2)'}">`
+    + `${v(r.h24)}</span><span style="font-size:0.6875rem;color:var(--fg4)"> mm/24h</span>`
+    + (L ? `<b style="display:block;font-size:0.6875rem;color:${L.col}">${L.name}</b>` : '')
+    + `<span style="display:block;font-size:0.6875rem;color:var(--fg4)">`
+    + `時雨 ${v(r.h1)}　${esc(r.name)} ${Math.round(rb.km)}km</span></td>`;
+}
+
+/* ── 氣象員播報 ────────────────────────────────────────────
+   把距離、方位、強度、侵襲機率、最接近時間、豪大雨特報、
+   各站台實測與衝擊，串成一段可以直接唸、直接抄進通報的話。
+   規則：官方數字（侵襲機率、特報、警報單、實測）與本機推估分開講，
+   每一句都要說得出來源，不能讓聽的人分不清哪句是氣象署說的。      */
+function briefText() {
+  const ty = DB.ty.data;
+  if (!ty) return '';
+  const L = [];
+  const t = new Date();
+  const hhmm = `${p2(t.getHours())}${p2(t.getMinutes())}`;
+
+  const bf = ms2bf(ty.vmax);
+  const d = Math.round(distToTaiwan(ty.pos));
+  const brg = bearing({ lat: 23.7, lng: 121.0 }, ty.pos);
+  const src = ty.official ? '中央氣象署' : 'GDACS 全球災害警報系統（非官方）';
+
+  L.push(`${fmtMD(Date.now())} ${hhmm} 時氣象概況播報。`);
+  L.push(`${DB.ty.name || ty.name}${ty.en ? `（${ty.en}）` : ''}中心位於台灣之${dirName(brg)}` +
+    `約 ${d} 公里海面，近中心最大風 ${bfLabel(bf)}${bfName(bf) ? `（${bfName(bf)}）` : ''}` +
+    `${ty.mvSpd ? `，以每小時 ${Math.round(ty.mvSpd)} 公里向${esc(dirZh(ty.mvDir) || dirName(brg))}移動` : ''}。` +
+    `資料來源：${src}。`);
+
+  // 官方侵襲機率
+  const pr = probFor(ty);
+  if (pr && pr.areas.length) {
+    const top = pr.areas.slice(0, 3).map(a => `${a.name} ${a.pct}%`).join('、');
+    L.push(`中央氣象署發布之未來 120 小時侵襲機率：${top}。（官方數字）`);
+  }
+
+  // 官方警報單
+  const w = DB.ty.warning;
+  if (w && w.active) {
+    L.push(`目前中央氣象署${w.isLand ? '已發布陸上颱風警報' : '已發布海上颱風警報'}` +
+      `${w.areas && w.areas.length ? `，警戒地區包括：${w.areas.slice(0, 6).join('、')}` : ''}。（官方發布）`);
+  }
+
+  // 豪大雨特報
+  if (ADV.length) {
+    L.push(ADV.map(a => `中央氣象署發布${a.kind}特報` +
+      `${a.areas.length ? `，影響地區：${a.areas.slice(0, 6).join('、')}` : ''}` +
+      `${a.end ? `，有效至 ${fmtShort(a.end)}` : ''}。`).join('') + '（官方發布）');
+  }
+
+  // 最接近時間（推估）
+  if (WARN && WARN.cpa) {
+    L.push(`本程式推估最接近時間為 ${fmtShort(WARN.cpa.t)}，` +
+      `屆時距台灣約 ${Math.round(WARN.cpa.d)} 公里。` +
+      `${EXTRAP ? '（此時間由外推路徑推算，非官方預報）' : '（依官方預報路徑推估）'}`);
+  }
+
+  // 站台現況
+  const withXY = DB.stations.filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lng));
+  if (SERIES && withXY.length) {
+    const rows = withXY.map(x => ({ x, i: stationImpact(SERIES, x, DB.cfg) }))
+      .filter(r => r.i).sort((a, b) => b.i.peak.bf - a.i.peak.bf);
+    const worst = rows.slice(0, 3).map(({ x, i }) => {
+      const ob = nearestObs(x), obf = obsBf(ob);
+      return `${x.name}推估 ${i.now.bf} 級` +
+        (obf != null ? `、實測 ${obf} 級（${ob.o.name}）` : '') +
+        `，尖峰 ${i.peak.bf} 級於 ${fmtShort(i.peak.t)}` +
+        (i.deadline ? `，應於 ${fmtShort(i.deadline)} 前完成關機` : '，預估不需關機');
+    });
+    if (worst.length) L.push(`站台衝擊（推估）：${worst.join('；')}。`);
+
+    // 實測與推估落差大的要特別點出來
+    const gaps = rows.map(({ x, i }) => {
+      const ob = nearestObs(x), obf = obsBf(ob);
+      return (obf != null && Math.abs(obf - i.now.bf) >= 3)
+        ? `${x.name}（推估 ${i.now.bf} 級、實測 ${obf} 級）` : null;
+    }).filter(Boolean);
+    if (gaps.length) {
+      L.push(`注意：${gaps.join('、')}實測與推估相差三級以上，` +
+        `代表模型在該地形不可靠，請以現場實測為準，勿逕依本程式時間執行關機。`);
+    }
+  }
+
+  // 雨量
+  const rains = withXY.map(x => {
+    const rb = nearestRain(x);
+    const lv = rb && rainLevel(rb.o);
+    return lv ? `${x.name}附近${rb.o.name}站 24 小時累積 ${Math.round(rb.o.h24)} mm（${lv.name}等級）` : null;
+  }).filter(Boolean);
+  if (rains.length) L.push(`雨量實測：${rains.join('；')}。`);
+
+  L.push('以上除標明「官方」者外，均為本程式推估值，正式研判請以中央氣象署發布為準。');
+  return L.join('\n');
+}
+
+function briefCard() {
+  const txt = briefText();
+  if (!txt) return '';
+  return `<div class="sec"><h2>氣象員播報</h2>
+    <button class="act" onclick="copyBrief()">複製</button></div>
+   <div class="card pad" style="margin-bottom:0.75rem">
+     <div id="briefTxt" style="white-space:pre-wrap;line-height:1.85;font-size:0.875rem;
+       color:var(--fg2)">${esc(txt)}</div>
+     <span class="sub" style="display:block;margin-top:0.5rem">
+       可直接複製貼進通報。官方數字與本機推估已分開標示，請勿刪去標示後轉發。</span>
+   </div>`;
+}
+
+function copyBrief() {
+  const txt = briefText();
+  if (!txt) return;
+  const done = () => toast('已複製播報稿');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(done, () => fallbackCopy(txt, done));
+  } else fallbackCopy(txt, done);
+}
+
+function fallbackCopy(txt, done) {
+  const ta = document.createElement('textarea');
+  ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) { toast('複製失敗，請長按選取'); }
+  document.body.removeChild(ta);
 }
 
 /* 雙颱（含以上）時的選擇列。只有一顆就不顯示，免得多佔一行版面。 */
@@ -1803,11 +2128,12 @@ function renderImpact() {
   box.innerHTML = `<div class="sec"><h2>站台衝擊預判</h2></div>
   <div class="card" style="padding:0.25rem 0.625rem;margin-bottom:0.375rem;overflow-x:auto">
    <table class="impact wide"><tr>
-     <th>站台</th><th>目前推估</th><th>實測</th><th>尖峰</th><th>應完成關機</th><th>預估可復機</th></tr>
+     <th>站台</th><th>目前推估</th><th>實測</th><th>雨量</th><th>尖峰</th><th>應完成關機</th><th>預估可復機</th></tr>
    ${rows.map(({ s, i }) => `<tr>
      <td class="nm">${esc(s.name)}<br><span style="font-family:var(--mono);font-size:0.6875rem;color:var(--fg4)">${i.km} km</span></td>
      <td><span class="pill" style="background:${bfColor(i.now.bf)}">${i.now.bf}</span></td>
      ${obsCell(s, i.now.bf)}
+     ${rainCell(s)}
      <td><span class="pill" style="background:${bfColor(i.peak.bf)}">${i.peak.bf}</span><br>
          <span style="font-size:0.6875rem;color:var(--fg4)">${fmtShort(i.peak.t)}</span></td>
      <td>${i.deadline ? fmtShort(i.deadline) : '<span style="color:var(--fg4)">不需關機</span>'}</td>
@@ -1815,7 +2141,7 @@ function renderImpact() {
    </tr>`).join('')}</table></div>
   <p class="hint" style="margin-bottom:0.875rem">
     風級為修正型渦旋模型推估的海面持續風，已計入颱風移動造成的右半圓增強，未計入地形與陸面摩擦，實際岸際風力可能有出入。
-    ${obsHint()}
+    ${obsHint()} ${rainHint()}
     門檻：建議關機 ${DB.cfg.bfShut} 級、緊急關機 ${DB.cfg.bfEmerg} 級、可復機 ${DB.cfg.bfResume} 級以下，
     關機作業預留 ${DB.cfg.leadMin} 分鐘。可於設定調整。</p>`;
 }
@@ -1835,6 +2161,15 @@ function obsCell(st, estBf) {
     + (warn ? `<b style="display:block;font-size:0.6875rem;color:var(--sb)">差 ${gap} 級</b>` : '')
     + `<span style="display:block;font-size:0.6875rem;color:var(--fg4)">`
     + `${esc(ob.o.name)} ${Math.round(ob.km)}km</span></td>`;
+}
+
+function rainHint() {
+  if (!RAIN.length) {
+    return '「雨量」欄需要授權碼才會有值（自動雨量站 O-A0002-001）。';
+  }
+  return `「雨量」為最近雨量站的累積值，本次取得 ${RAIN.length} 站。`
+    + '分級依中央氣象署標準：大雨 24 小時 80 mm 或時雨 40 mm；豪雨 24 小時 200 mm 或 3 小時 100 mm；'
+    + '大豪雨 350 mm；超大豪雨 500 mm。<b>關機門檻只看風，雨量僅供研判聯外道路與積水風險。</b>';
 }
 
 function obsHint() {
@@ -2628,7 +2963,7 @@ if (DB.cfg.pin) lock();
 if (DB.cfg.auto) setAuto(true);
 window.openStation = openStation; window.openTypes = openTypes; window.openSort = openSort;
 window.openImportPreview = openImportPreview; window.loadTyphoon = loadTyphoon; window.go = go; window.openPin = openPin;
-window.pickTyphoon = pickTyphoon;
+window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief;
 
 </script>
 
