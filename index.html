@@ -3204,7 +3204,26 @@ window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief; window.onTimelin
   ];
   let windyOv = 'radar';
 
+  /* 對焦位置:站台或颱風。
+     預設仍是站台 —— 值班最常問的是「自家設備頭上在下什麼」,
+     不是颱風中心那片海。但要看颱風本體的雲系與環流時,
+     切到颱風才對得上,所以兩個都留,並記住上次的選擇。      */
+  const WINDY_FOCUS_KEY = 'galepost.ui.windyfocus';
+  let windyFocus = 'station';
+  try { windyFocus = localStorage.getItem(WINDY_FOCUS_KEY) || 'station'; } catch (e) {}
+
+  function typhoonCenter() {
+    const ty = (typeof DB !== 'undefined' && DB.ty) ? DB.ty.data : null;
+    const p = ty && ty.pos;
+    return (p && Number.isFinite(p.lat) && Number.isFinite(p.lng)) ? p : null;
+  }
+
   function windyCenter() {
+    if (windyFocus === 'typhoon') {
+      const p = typhoonCenter();
+      // 颱風可能還在幾百公里外,拉遠一級才看得到整個環流
+      if (p) return { lat: p.lat, lng: p.lng, zoom: 5 };
+    }
     // 以自己的站台為中心最有用 —— 要看的是自家設備頭上在下什麼,
     // 不是颱風中心那片海。沒有站台座標才退回台灣中心。
     const pts = (typeof DB !== 'undefined' ? DB.stations : [])
@@ -3213,9 +3232,10 @@ window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief; window.onTimelin
       return {
         lat: pts.reduce((a, s) => a + s.lat, 0) / pts.length,
         lng: pts.reduce((a, s) => a + s.lng, 0) / pts.length,
+        zoom: 6,
       };
     }
-    return { lat: 23.7, lng: 121.0 };
+    return { lat: 23.7, lng: 121.0, zoom: 6 };
   }
 
   function windyURL(ov) {
@@ -3223,7 +3243,7 @@ window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief; window.onTimelin
     const lat = c.lat.toFixed(3), lng = c.lng.toFixed(3);
     const q = new URLSearchParams({
       lat, lon: lng, detailLat: lat, detailLon: lng,
-      zoom: '6', level: 'surface', overlay: ov,
+      zoom: String(c.zoom || 6), level: 'surface', overlay: ov,
       calendar: 'now', menu: '', type: 'map',
       location: 'coordinates', metricWind: 'm/s', metricTemp: 'default',
       radarRange: '-1',
@@ -3236,13 +3256,21 @@ window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief; window.onTimelin
     const box = document.getElementById('tyWindy');
     if (!box) return;
     const c = windyCenter();
-    const full = `https://www.windy.com/${c.lat.toFixed(3)}/${c.lng.toFixed(3)}?${windyOv},${c.lat.toFixed(3)},${c.lng.toFixed(3)},6`;
+    const full = `https://www.windy.com/${c.lat.toFixed(3)}/${c.lng.toFixed(3)}?${windyOv},${c.lat.toFixed(3)},${c.lng.toFixed(3)},${c.zoom || 6}`;
+    // 沒有颱風就不顯示對焦切換 —— 切過去也只會是一片空海
+    const canTy = !!typhoonCenter();
+    const focusSeg = canTy
+      ? '<div class="seg" id="wyFo" style="margin-top:0.375rem">'
+        + [['station', '對焦站台'], ['typhoon', '對焦颱風']].map(([f, l]) =>
+            `<button type="button" data-fo="${f}" aria-pressed="${windyFocus === f}">${l}</button>`
+          ).join('') + '</div>'
+      : '';
     box.innerHTML =
       '<div class="sec"><h2>即時影像 Windy</h2></div>' +
       '<div class="seg" id="wyOv">' +
       WINDY_OV.map(([o, l]) =>
         `<button type="button" data-ov="${o}" aria-pressed="${windyOv === o}">${l}</button>`
-      ).join('') + '</div>' +
+      ).join('') + '</div>' + focusSeg +
       '<div class="tyframe" id="wyFrame"></div>' +
       `<div class="btnrow" style="margin-top:0.625rem">
          <a class="btn sm" href="${full}" target="_blank" rel="noopener"
@@ -3260,7 +3288,21 @@ window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief; window.onTimelin
         x.setAttribute('aria-pressed', String(x === b)));
       mountWindyFrame();
     });
+    const fo = box.querySelector('#wyFo');
+    if (fo) fo.addEventListener('click', e => {
+      const b = e.target.closest('button[data-fo]');
+      if (!b) return;
+      windyFocus = b.dataset.fo;
+      try { localStorage.setItem(WINDY_FOCUS_KEY, windyFocus); } catch (err) {}
+      fo.querySelectorAll('button').forEach(x =>
+        x.setAttribute('aria-pressed', String(x === b)));
+      mountWindyFrame();
+    });
   }
+
+  // 上一次真的載進去的網址。Windy 的圖磚刻意不快取,重掛一次 iframe
+  // 就是又一輪流量,颱風天要省。網址沒變就不重載。
+  let _windySrc = '';
 
   function mountWindyFrame() {
     const frame = document.getElementById('wyFrame');
@@ -3268,10 +3310,14 @@ window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief; window.onTimelin
     if (!navigator.onLine) {
       frame.innerHTML = '<div class="ph">目前離線，無法載入 Windy 即時影像。<br>' +
         '站台管制與回報產出不受影響。</div>';
+      _windySrc = '';                  // 恢復連線後要重新掛回來
       return;
     }
+    const src = windyURL(windyOv);
+    if (_windySrc === src && frame.querySelector('iframe')) return;
+    _windySrc = src;
     const f = document.createElement('iframe');
-    f.src = windyURL(windyOv);
+    f.src = src;
     f.loading = 'lazy';
     f.title = 'Windy 即時影像';
     f.referrerPolicy = 'no-referrer';
