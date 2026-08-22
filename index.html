@@ -458,23 +458,23 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
   <div id="tyPick"></div>
   <div class="seg tysub" id="tySeg">
     <button type="button" data-ty="now" aria-pressed="true">概況</button>
-    <button type="button" data-ty="map" aria-pressed="false">路徑</button>
-    <button type="button" data-ty="st" aria-pressed="false">站台</button>
     <button type="button" data-ty="brief" aria-pressed="false">播報</button>
+    <button type="button" data-ty="map" aria-pressed="false">路徑</button>
     <button type="button" data-ty="live" aria-pressed="false">實況</button>
+    <button type="button" data-ty="st" aria-pressed="false">站台</button>
   </div>
   <div class="typane on" id="ty-now">
     <div id="tyWarn"></div>
     <div id="tyBody"></div>
   </div>
+  <div class="typane" id="ty-brief"><div id="tyBrief"></div></div>
   <div class="typane" id="ty-map">
     <div id="map" style="display:none"></div>
     <div id="tyTl"></div>
     <div id="tyFc"></div>
   </div>
-  <div class="typane" id="ty-st"><div id="tyImpact"></div></div>
-  <div class="typane" id="ty-brief"><div id="tyBrief"></div></div>
   <div class="typane" id="ty-live"><div id="tyWindy"></div></div>
+  <div class="typane" id="ty-st"><div id="tyImpact"></div></div>
 </section>
 
 <!-- ══════════ 站台 ══════════ -->
@@ -675,6 +675,24 @@ function bf2ms(bf) { return BF_MIN[clamp(Math.round(bf), 0, 17)]; }
 function bfColor(bf) { return `var(--bf${clamp(Math.round(bf), 0, 13)})`; }
 function bfName(bf) { return BF_NAME[clamp(Math.round(bf), 0, 17)] || '颶風'; }
 function bfLabel(bf) { return bf >= 17 ? '17 級以上' : `${bf} 級`; }
+
+/* 中央氣象署的颱風強度分級（依近中心最大風速 m/s）。
+   蒲福風級講的是「風多大」,強度分級講的是「這顆算什麼等級」——
+   通報上寫的是「中颱」而不是「12 級」,兩個要一起給。
+   17.2 以下還不是颱風,是熱帶性低氣壓。                        */
+function tcClass(ms) {
+  if (!Number.isFinite(ms)) return '';
+  if (ms >= 51.0) return '強颱';
+  if (ms >= 32.7) return '中颱';
+  if (ms >= 17.2) return '輕颱';
+  return '熱帶性低壓';
+}
+const TC_FULL = { 強颱: '強烈颱風', 中颱: '中度颱風', 輕颱: '輕度颱風', 熱帶性低壓: '熱帶性低氣壓' };
+// 「中颱（12 級）」
+const tcLabel = ms => {
+  const c = tcClass(ms), b = bfLabel(ms2bf(ms));
+  return c ? `${c}（${b}）` : b;
+};
 const KT2MS = 0.514444;
 
 /* ═══ 萬用座標輸入解析 ═══════════════════════════════════
@@ -861,7 +879,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v9';
+const APP_VER = 'v10';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1165,6 +1183,19 @@ const RAIN_PHENOM = /(大雨|豪雨|豪大雨)/;
    改成遞迴走訪:沿途記住最近看到的 locationName 與 endTime,
    碰到 phenomena 節點就記一筆 —— 欄位怎麼包都抓得到。
    （作法取自使用者另一支程式 ARGUS，那邊已在真實環境跑過。）      */
+/* 把一個節點底下所有的 locationName 撈出來。
+   W-C0033-002 的影響地區放在 info.affectedAreas.location[] ——
+   也就是在 phenomena 的「下面」而不是上面。只往下傳承的話,
+   記到 phenomena 那一刻地區還是空的,卡片上就完全沒有影響地區。 */
+function collectNames(node, out) {
+  if (!node || typeof node !== 'object') return out;
+  if (Array.isArray(node)) { for (const x of node) collectNames(x, out); return out; }
+  const v = pick(node, 'locationName', 'LocationName', 'countyName', 'CountyName');
+  if (typeof v === 'string' && v.trim() && !out.includes(v.trim())) out.push(v.trim());
+  for (const k in node) collectNames(node[k], out);
+  return out;
+}
+
 function walkAdvisory(node, loc, end, out) {
   if (!node || typeof node !== 'object') return;
   if (Array.isArray(node)) { for (const x of node) walkAdvisory(x, loc, end, out); return; }
@@ -1179,7 +1210,12 @@ function walkAdvisory(node, loc, end, out) {
 
   const ph = pick(node, 'phenomena', 'Phenomena');
   const kind = String((ph && typeof ph === 'object' ? pick(ph, 'value', 'Value') : ph) || '').trim();
-  if (kind) out.push({ kind, area: nextLoc, end: nextEnd });
+  if (kind) {
+    // 先看自己底下有沒有地區,沒有才用從上面傳下來的
+    const own = collectNames(node, []);
+    const areas = own.length ? own : (nextLoc ? [nextLoc] : []);
+    out.push({ kind, areas, end: nextEnd });
+  }
 
   for (const k in node) walkAdvisory(node[k], nextLoc, nextEnd, out);
 }
@@ -1207,7 +1243,7 @@ async function fetchAdvisory(key) {
     const byKind = new Map();                    // 同一種特報合併地區,不要一縣市一張卡
     for (const a of rain) {
       const cur = byKind.get(a.kind) || { kind: a.kind, areas: [], end: 0 };
-      if (a.area && !cur.areas.includes(a.area)) cur.areas.push(a.area);
+      for (const x of a.areas) if (!cur.areas.includes(x)) cur.areas.push(x);
       cur.end = Math.max(cur.end, a.end || 0);
       byKind.set(a.kind, cur);
     }
@@ -1942,12 +1978,13 @@ function renderTyphoon(o) {
   ];
   $('#tyPick').innerHTML = typhoonPicker();
   $('#tyBrief').innerHTML = briefCard();
-  body.innerHTML = advisoryCard() + `<div class="card ty-hero">
+  body.innerHTML = `<div class="card ty-hero">
     <div class="glow" style="background:${bfColor(bfV)}"></div>
     <div class="ty-top">${bfBadge(bfV, 'lg')}
       <div class="ty-nm"><b>${esc(ty.name)}</b>
-        <span>${ty.en && ty.en !== ty.name ? esc(ty.en) + '　' : ''}近中心最大風 ${bfLabel(bfV)}　${bfName(bfV)}</span></div></div>
+        <span>${ty.en && ty.en !== ty.name ? esc(ty.en) + '　' : ''}<i style="font-style:normal;font-weight:700;color:${bfColor(bfV)}">${TC_FULL[tcClass(ty.vmax)] || ''}</i>　近中心最大風 ${bfLabel(bfV)}</span></div></div>
     <div class="ty-gr">${g.map(([l, v]) => `<div><b>${esc(v)}</b><small>${l}</small></div>`).join('')}</div>
+    ${advisoryStrip()}
   </div>` + warningCard();
 
   drawMap(ty);
@@ -1956,28 +1993,26 @@ function renderTyphoon(o) {
   paintBfBar(Math.max(bfV, ...DB.stations.map(s => (SERIES ? stationImpact(SERIES, s, DB.cfg)?.now.bf : -1) ?? -1)));
 }
 
-/* 豪大雨特報。三種等級各一張卡、每張都掛一次「中央氣象署發布」,
-   同一句話講三遍反而讓人不去讀它。合成一張,徽章只出現一次。      */
-function advisoryCard() {
+/* 豪大雨特報。
+   原本是獨立的卡、每張還掛一次「中央氣象署發布」——
+   使用者反映看不懂那是什麼。特報本來就是氣象署發的,
+   併進颱風卡底部一條，標題寫「氣象署特報」就夠了。          */
+function advisoryStrip() {
   if (!ADV.length) return '';
   const colOf = k => (RAIN_LEVELS.find(L => k.includes(L.name)) || { col: 'var(--sb)' }).col;
-  const top = colOf(ADV[0].kind);
   const rows = ADV.map(a => {
     const c = colOf(a.kind);
-    return `<div style="display:flex;gap:0.5rem;align-items:baseline;flex-wrap:wrap;
-       padding:0.4375rem 0;border-top:1px solid var(--edge)">
-      <b style="color:${c};font-size:0.9375rem;flex:0 0 auto">${esc(a.kind)}</b>
-      <span style="font-size:0.8125rem;color:var(--fg2);flex:1 1 8rem;min-width:0;line-height:1.6">
-        ${a.areas.length ? esc(a.areas.join('、')) : '—'}</span>
+    return `<div style="display:flex;gap:0.4375rem;align-items:baseline;flex-wrap:wrap;margin-top:0.375rem">
+      <b style="color:${c};font-size:0.8125rem;flex:0 0 auto;border:1px solid ${c};
+        border-radius:0.25rem;padding:0 0.3125rem">${esc(a.kind)}</b>
+      <span style="font-size:0.8125rem;color:var(--fg2);flex:1 1 7rem;min-width:0;line-height:1.55">
+        ${a.areas.length ? esc(a.areas.join('、')) : '（未列地區）'}</span>
       ${a.end ? `<span style="font-family:var(--mono);font-size:0.6875rem;color:var(--fg3);
         flex:0 0 auto">至 ${fmtShort(a.end)}</span>` : ''}
     </div>`;
   }).join('');
-  return `<div class="card pad" style="margin-bottom:0.75rem;border-color:${top}">
-    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding-bottom:0.375rem">
-      <b style="font-size:1rem;color:${top}">豪大雨特報</b>
-      <span style="font-size:0.6875rem;color:var(--ok);border:1px solid var(--ok);
-        border-radius:0.25rem;padding:1px 0.375rem">中央氣象署發布</span></div>
+  return `<div style="border-top:1px solid var(--edge);margin-top:0.75rem;padding-top:0.5rem">
+    <div style="font-size:0.6875rem;letter-spacing:.08em;color:var(--fg3)">氣象署特報</div>
     ${rows}</div>`;
 }
 
@@ -2012,8 +2047,9 @@ function briefText() {
   const src = ty.official ? '中央氣象署' : 'GDACS 全球災害警報系統（非官方）';
 
   L.push(`${fmtMD(Date.now())} ${hhmm} 時氣象概況播報。`);
-  L.push(`${ty.name}${ty.en && ty.en !== ty.name ? `（${ty.en}）` : ''}中心位於台灣之${dirName(brg)}` +
-    `約 ${d} 公里海面，近中心最大風 ${bfLabel(bf)}${bfName(bf) ? `（${bfName(bf)}）` : ''}` +
+  L.push(`${TC_FULL[tcClass(ty.vmax)] || ''}${ty.name}${ty.en && ty.en !== ty.name ? `（${ty.en}）` : ''}` +
+    `中心位於台灣之${dirName(brg)}` +
+    `約 ${d} 公里海面，近中心最大風 ${bfLabel(bf)}` +
     `${ty.mvSpd ? `，以每小時 ${Math.round(ty.mvSpd)} 公里向${esc(dirZh(ty.mvDir) || dirName(brg))}移動` : ''}。` +
     `資料來源：${src}。`);
 
@@ -2026,9 +2062,10 @@ function briefText() {
 
   // 豪大雨特報
   if (ADV.length) {
-    L.push(ADV.map(a => `中央氣象署發布${a.kind}特報` +
-      `${a.areas.length ? `，影響地區：${a.areas.slice(0, 6).join('、')}` : ''}` +
-      `${a.end ? `，有效至 ${fmtShort(a.end)}` : ''}。`).join('') + '（官方發布）');
+    // 三句「中央氣象署發布X特報」唸起來很蠢,合成一句
+    L.push('中央氣象署發布' + ADV.map(a =>
+      `${a.kind}特報${a.areas.length ? `（${a.areas.slice(0, 8).join('、')}）` : ''}`
+    ).join('、') + '。（官方發布）');
   }
 
   // 最接近時間（推估）
@@ -2084,8 +2121,6 @@ function briefCard() {
    <div class="card pad" style="margin-bottom:0.75rem">
      <div id="briefTxt" style="white-space:pre-wrap;line-height:1.85;font-size:0.875rem;
        color:var(--fg2)">${esc(txt)}</div>
-     <span class="sub" style="display:block;margin-top:0.5rem">
-       可直接複製貼進通報。官方數字與本機推估已分開標示，請勿刪去標示後轉發。</span>
    </div>`;
 }
 
@@ -2122,7 +2157,7 @@ function typhoonPicker() {
     return `<button class="ty-chip${k === cur ? ' on' : ''}" onclick="pickTyphoon('${esc(k)}')">
       <i style="background:${bfColor(bf)}"></i>
       <span class="tc-b"><span class="tc-n">${esc(t.name)}</span>
-      <span class="tc-d">${bf} 級 · ${d} km</span></span></button>`;
+      <span class="tc-d">${tcClass(t.vmax)} ${bf} 級 · ${d} km</span></span></button>`;
   }).join('');
   return `<div class="ty-pick">
     <div class="tp-h">${list.length} 個熱帶氣旋活動中，點選要推算的那一顆</div>
@@ -2455,7 +2490,7 @@ function drawMap(ty) {
       dashArray: '4,4', fillColor: '#EFAA35', fillOpacity: .06,
     }).addTo(MLAYER);
     L.marker([o.pos.lat, o.pos.lng], { icon: tyEye(false), zIndexOffset: 1100 })
-      .bindTooltip(`${o.name}　${bfLabel(ms2bf(o.vmax))}（點選切換）`).on('click', go).addTo(MLAYER);
+      .bindTooltip(`${o.name}　${tcLabel(o.vmax)}（點選切換）`).on('click', go).addTo(MLAYER);
     ANCHORS.push(
       L.marker([o.pos.lat, o.pos.lng], { icon: tyTag(`${esc(o.name)}<br>${fmtShort(o.t0)}`, 'sec'), zIndexOffset: 1090 })
         .on('click', go).addTo(MLAYER));
@@ -2491,7 +2526,7 @@ function drawMap(ty) {
   }).bindTooltip(`七級風半徑 ${ty.r15} km`).addTo(MLAYER);
 
   L.marker([ty.pos.lat, ty.pos.lng], { icon: tyEye(true), zIndexOffset: 1300 })
-    .bindTooltip(`${ty.name}　${bfLabel(ms2bf(ty.vmax))}`).addTo(MLAYER);
+    .bindTooltip(`${ty.name}　${tcLabel(ty.vmax)}`).addTo(MLAYER);
   ANCHORS.unshift(L.marker([ty.pos.lat, ty.pos.lng], {
     icon: tyTag(`${esc(ty.name)}<br>${fmtShort(ty.t0)}`, ''), zIndexOffset: 1290,
   }).addTo(MLAYER));
@@ -3211,7 +3246,7 @@ let tySub = 'now';
 try { tySub = localStorage.getItem(TYSUB_KEY) || 'now'; } catch (e) {}
 
 function goTySub(k) {
-  const panes = ['now', 'map', 'st', 'brief', 'live'];
+  const panes = ['now', 'brief', 'map', 'live', 'st'];
   if (!panes.includes(k)) k = 'now';
   tySub = k;
   try { localStorage.setItem(TYSUB_KEY, k); } catch (e) {}
