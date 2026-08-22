@@ -843,11 +843,42 @@ const TW_ISLES = [
   { n: '馬祖', lat: 26.15, lng: 119.95 }, { n: '蘭嶼', lat: 22.04, lng: 121.55 },
   { n: '綠島', lat: 22.66, lng: 121.48 },
 ];
-function distToTaiwan(p) {                    // 到台灣本島或離島最近距離（km）
+function distToOutline(p) {                   // 只算到本島海岸
   let m = Infinity;
   for (const q of TW_OUTLINE) m = Math.min(m, distKm(p, q));
+  return m;
+}
+function distToTaiwan(p) {                    // 到台灣本島或離島最近距離（km）
+  let m = distToOutline(p);
   for (const q of TW_ISLES) m = Math.min(m, distKm(p, q));
   return m;
+}
+
+/* ── 台灣近海 N 公里界線 ──────────────────────────────────
+   海上颱風警報的門檻:暴風範圍可能在 24 小時內進入
+   台灣、澎湖、金門、馬祖近海 100 公里以內海域。
+   這條線畫出來,就看得到暴風圈還差多遠碰到門檻。
+
+   重點:直接拿 distToOutline 這個函式本身反解等值線,
+   而不是另外描一條「看起來差不多」的線 ——
+   畫在圖上的必須就是警報時機真正用的那條,
+   否則圖說一套、算出來的時間又是另一套。               */
+const TW_CENTER = { lat: 23.8, lng: 120.95 };
+
+function offshoreRing(km) {
+  const pts = [];
+  for (let b = 0; b < 360; b += 3) {
+    // 由中心往外二分搜尋「距海岸剛好 km」的那一點
+    let lo = 0, hi = km + 700;
+    for (let i = 0; i < 22; i++) {
+      const mid = (lo + hi) / 2;
+      if (distToOutline(destPoint(TW_CENTER, b, mid)) < km) lo = mid; else hi = mid;
+    }
+    const q = destPoint(TW_CENTER, b, (lo + hi) / 2);
+    pts.push([q.lat, q.lng]);
+  }
+  pts.push(pts[0]);
+  return pts;
 }
 
 /* ═══ 加密備份：PBKDF2 + AES-GCM ═════════════════════════ */
@@ -883,7 +914,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v11';
+const APP_VER = 'v12';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1968,7 +1999,17 @@ function renderTyphoon(o) {
     paintBfBar(null); return;
   }
 
-  msg.innerHTML = (note ? `<div class="msg w">${esc(note)}</div>` : '') +
+  /* 資料放久了要講。
+     這支程式是「快取優先」而且颱風天訊號常常斷,畫面上明明有數字、
+     其實可能是一小時前的 —— 過期的颱風資訊比沒有資訊更危險,
+     所以超過門檻就明講幾分鐘前,不要讓人以為看到的是即時的。 */
+  const ageMin = DB.ty.at ? Math.floor((Date.now() - DB.ty.at) / 60000) : -1;
+  const stale = ageMin >= 30
+    ? `<div class="msg ${ageMin >= 90 ? 'e' : 'w'}">資料已是 ${ageMin >= 120
+        ? Math.floor(ageMin / 60) + ' 小時' : ageMin + ' 分鐘'}前取得的，`
+      + `可能已經不是現況。按上方「更新」重新取得。</div>`
+    : '';
+  msg.innerHTML = (note ? `<div class="msg w">${esc(note)}</div>` : '') + stale +
     `<div class="msg i">${ty.official ? '中央氣象署官方路徑' : 'GDACS（非官方，僅觀測位置）'}`
     + `${DB.ty.at ? `　${fmtShort(DB.ty.at)} 更新` : ''}`
     + '　·　關機與警報時機為<b>推估</b>，以氣象署警報單為準。</div>';
@@ -2282,9 +2323,26 @@ function drawTimeMarker() {
   }).addTo(TMARK);
 }
 
+/* 地圖圖例。顏色多了之後（紅=選中、琥珀=其他颱風、青=預報、虛線=近海界線）,
+   不講一下沒人知道那條淡青虛線是什麼。 */
+function mapLegend() {
+  const seaKm = Number.isFinite(DB.cfg.seaBuffer) ? DB.cfg.seaBuffer : 100;
+  const dot = (c, t) => `<span style="display:inline-flex;align-items:center;gap:0.25rem">
+    <i style="width:0.625rem;height:0.625rem;border-radius:50%;background:${c};
+      display:inline-block;flex:0 0 auto"></i>${t}</span>`;
+  return `<p class="hint" style="display:flex;flex-wrap:wrap;gap:0.5rem 0.875rem;
+    margin:0.375rem 0 0.875rem">
+    ${dot('#EF5B4C', '選中的颱風')}${dot('#EFAA35', '其他颱風（點可切換）')}
+    ${dot(EXTRAP ? '#EFAA35' : '#54C7EA', EXTRAP ? '外推路徑' : '官方預報路徑')}
+    <span style="display:inline-flex;align-items:center;gap:0.25rem">
+      <i style="width:1.125rem;height:0;border-top:1.5px dashed #54C7EA;
+        display:inline-block;flex:0 0 auto"></i>近海 ${seaKm} km（海警門檻）</span>
+  </p>`;
+}
+
 function renderImpact() {
   const tl = $('#tyTl');
-  if (tl) tl.innerHTML = SERIES ? timelineCard() : '';
+  if (tl) tl.innerHTML = (SERIES ? mapLegend() : '') + (SERIES ? timelineCard() : '');
   const box = $('#tyImpact');
   if (!SERIES) { box.innerHTML = ''; return; }
   const withXY = DB.stations.filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
@@ -2479,6 +2537,16 @@ function drawMap(ty) {
     L.polyline(latlngs, { color: '#08131A', weight: (opt.weight || 2) + 2.5, opacity: .55 }).addTo(MLAYER);
     return L.polyline(latlngs, opt).addTo(MLAYER);
   };
+
+  // ── 台灣近海界線：海上颱風警報的門檻 ──────────────────────
+  // 墊在最底層。暴風圈碰到這條線,就是氣象署發海警的條件。
+  const seaKm = Number.isFinite(DB.cfg.seaBuffer) ? DB.cfg.seaBuffer : 100;
+  if (seaKm > 0) {
+    L.polyline(offshoreRing(seaKm), {
+      color: '#54C7EA', weight: 1.4, opacity: .5, dashArray: '3,6',
+      fill: false, interactive: false,
+    }).addTo(MLAYER);
+  }
 
   // ── 其他同時活動的颱風：琥珀色、輕量、可點選切換 ──────────
   // 先畫,讓選中的那顆疊在最上層。
@@ -2941,6 +3009,7 @@ function renderSettings() {
       <a class="btn sm" href="https://opendata.cwa.gov.tw/user/authkey" target="_blank" rel="noopener" style="text-decoration:none">申請授權碼</a>
       <a class="btn sm" href="https://www.cwa.gov.tw/V8/C/P/Typhoon/TY_NEWS.html" target="_blank" rel="noopener" style="text-decoration:none">官方警報單</a>
       <a class="btn sm" href="https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html" target="_blank" rel="noopener" style="text-decoration:none">雷達回波</a>
+      <a class="btn sm" href="https://watch.ncdr.nat.gov.tw/watch_page_typhoon_v2" target="_blank" rel="noopener" style="text-decoration:none">NCDR 監測網</a>
     </div>
   </div>
 
@@ -3528,7 +3597,11 @@ window.checkUpdate = checkUpdate;
       `<div class="btnrow" style="margin-top:0.625rem">
          <a class="btn sm" href="${full}" target="_blank" rel="noopener"
             style="text-decoration:none">Windy 全畫面 ↗</a>
+         <a class="btn sm" href="https://watch.ncdr.nat.gov.tw/watch_page_typhoon_v2"
+            target="_blank" rel="noopener" style="text-decoration:none">NCDR 颱風監測 ↗</a>
        </div>` +
+      '<p class="hint" style="margin-top:0.5rem">NCDR 天氣與氣候監測網：各國預報路徑比對' +
+      '（氣象署／美軍／日本／韓國／中國）、衛星雲圖、雨量與風速監測。</p>' +
       '<p class="hint" style="margin-top:0.5rem">Windy 為實際觀測與模式繪圖，需連網。' +
       '風哨的關機、復機時間仍是本機推估，兩者請分開看。</p>';
 
