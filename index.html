@@ -814,7 +814,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v6';
+const APP_VER = 'v7';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -828,6 +828,8 @@ async function getJSON(url, ms = 13000) {
   } finally { clearTimeout(t); }
 }
 const pick = (o, ...k) => { for (const x of k) if (o && o[x] != null) return o[x]; };
+// CWA 只有一筆時會直接給物件而不是長度 1 的陣列,包一層才不會漏掉。
+const toArr = x => x == null ? [] : (Array.isArray(x) ? x : [x]);
 function parseLL(v) {
   if (typeof v !== 'string') return null;
   const [lo, la] = v.split(',').map(Number);
@@ -847,12 +849,12 @@ let _cwaSeen = { raw: 0, ok: 0 };
 async function fetchCWAAll(key) {
   const j = await cwaJson('W-C0034-005', key);
   const wrap = pick(j?.records, 'tropicalCyclones', 'TropicalCyclones') || {};
-  const list = pick(wrap, 'tropicalCyclone', 'TropicalCyclone') || [];
-  const out = (Array.isArray(list) ? list : [])
+  const list = toArr(pick(wrap, 'TropicalCyclone', 'tropicalCyclone'));
+  const out = list
     .map(parseCyclone)
     .filter(Boolean)
     .sort((a, b) => distToTaiwan(a.pos) - distToTaiwan(b.pos));
-  _cwaSeen = { raw: Array.isArray(list) ? list.length : 0, ok: out.length };
+  _cwaSeen = { raw: list.length, ok: out.length };
   return out;
 }
 async function fetchCWA(key) {                 // 舊呼叫點沿用：只要最該看的那一顆
@@ -860,42 +862,99 @@ async function fetchCWA(key) {                 // 舊呼叫點沿用：只要最
   return all[0] || null;
 }
 
+/* ── CWA 熱帶氣旋欄位 ──────────────────────────────────────
+   實際回應是 PascalCase,而且座標是「分開的兩個欄位」
+   CoordinateLatitude / CoordinateLongitude —— 不是 "lng,lat" 字串。
+   先前只認字串,拿到 undefined 就整顆回 null,清單被 filter 光,
+   畫面上就變成「氣象署沒有發布颱風路徑」。真正原因在這裡。   */
+const num = v => {
+  const x = typeof v === 'string' ? parseFloat(v) : v;
+  return Number.isFinite(x) ? x : NaN;
+};
+
+function fixCoord(f) {
+  let lat = num(pick(f, 'CoordinateLatitude', 'coordinateLatitude', 'lat', 'Latitude', 'latitude'));
+  let lng = num(pick(f, 'CoordinateLongitude', 'coordinateLongitude', 'lon', 'lng', 'Longitude', 'longitude'));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    // 舊式 "lng,lat" 字串相容
+    const c = pick(f, 'coordinate', 'Coordinate', 'coordinates');
+    if (typeof c === 'string' && c.includes(',')) {
+      const [a, b] = c.split(',').map(Number);
+      lng = a; lat = b;
+    }
+  }
+  return (Number.isFinite(lat) && Number.isFinite(lng)) ? { lat, lng } : null;
+}
+
+/* 暴風半徑:分析點是 Circle15ms.Radius(七級風平均半徑),
+   預報點是 Radius70PercentProbability(70% 機率半徑)。
+   Radius 有時是陣列(不同象限分開給),取最大的那一個。        */
+function galeRadius(f) {
+  const circ = pick(f, 'Circle15ms', 'circle15ms', 'circleOf15Ms', 'CircleOf15Ms');
+  let cand = circ ? pick(circ, 'Radius', 'radius') : null;
+  if (cand == null) cand = pick(f, 'Radius70PercentProbability', 'radius70PercentProbability',
+                                   'RadiusOf70PercentProbability', 'radiusOf70PercentProbability');
+  if (Array.isArray(cand)) {
+    const v = cand
+      .map(x => num(x && typeof x === 'object' ? pick(x, 'radius', 'Radius', 'value', 'Value') : x))
+      .filter(Number.isFinite);
+    return v.length ? Math.max(...v) : 0;
+  }
+  const n2 = num(cand);
+  return Number.isFinite(n2) ? n2 : 0;
+}
+
+const fixTime = f => Date.parse(pick(f, 'DateTime', 'dateTime', 'fixTime', 'FixTime') || '');
+
 function parseCyclone(c) {
-  const an = pick(c, 'analysisData', 'AnalysisData') || {};
-  const fixes = pick(an, 'fix', 'Fix') || [];
+  const an = pick(c, 'AnalysisData', 'analysisData') || {};
+  const fixes = toArr(pick(an, 'Fix', 'fix'));
   const cur = fixes[fixes.length - 1];
   if (!cur) return null;
-  const pos = parseLL(pick(cur, 'coordinate', 'Coordinate'));
+  const pos = fixCoord(cur);
   if (!pos) return null;
-  const circ = pick(cur, 'circleOf15Ms', 'CircleOf15Ms', 'Circle15ms') || {};
-  const fd = pick(c, 'forecastData', 'ForecastData') || {};
-  const ff = pick(fd, 'fix', 'Fix') || [];
-  const t0 = new Date(pick(cur, 'fixTime', 'FixTime') || Date.now()).getTime();
-  const vmax = Number(pick(cur, 'maxWindSpeed', 'MaxWindSpeed') || 0);
-  const r15 = Math.round(Number(pick(circ, 'radius', 'Radius') || 0)) ||
+
+  const fd = pick(c, 'ForecastData', 'forecastData') || {};
+  const ff = toArr(pick(fd, 'Fix', 'fix'));
+  const initMs = Date.parse(pick(fd, 'InitialTime', 'initialTime', 'initTime') || '');
+
+  const ft = fixTime(cur);
+  const t0 = Number.isFinite(ft) ? ft : Date.now();
+  const vmax = num(pick(cur, 'MaxWindSpeed', 'maxWindSpeed')) || 0;
+  const r15 = Math.round(galeRadius(cur)) ||
     (vmax >= 33 ? 250 : vmax >= 25 ? 200 : 150);
+
+  // 預報時距:優先用 Tau/ForecastHour,沒有就拿 DateTime 減掉分析時刻。
+  const tauOf = f => {
+    const t = num(pick(f, 'Tau', 'tau', 'ForecastHour', 'forecastHour'));
+    if (Number.isFinite(t)) return t;
+    const dt = fixTime(f);
+    const base = Number.isFinite(initMs) ? initMs : t0;
+    return Number.isFinite(dt) ? Math.round((dt - base) / 3600000) : NaN;
+  };
 
   return {
     src: 'CWA', official: true,
     // 挑選用的識別碼：重新抓資料後要能認出「使用者剛才在看的是這顆」。
-    // 氣象署的編號最穩定，沒有編號才退回英文名。
-    id: String(pick(c, 'cwaTdNo', 'CwaTdNo', 'typhoonNo', 'TyphoonNo') ||
-               pick(c, 'typhoonName', 'TyphoonName') || ''),
-    name: pick(c, 'cwaTyphoonName', 'CwaTyphoonName') || pick(c, 'typhoonName', 'TyphoonName') || '未命名',
-    en: pick(c, 'typhoonName', 'TyphoonName') || '',
+    id: String(pick(c, 'CwaTdNo', 'cwaTdNo', 'TyphoonNo', 'typhoonNo') ||
+               pick(c, 'TyphoonName', 'typhoonName') || ''),
+    name: pick(c, 'CwaTyphoonName', 'cwaTyphoonName') ||
+          pick(c, 'TyphoonName', 'typhoonName') || '未命名',
+    en: pick(c, 'TyphoonName', 'typhoonName') || '',
     t0, pos, vmax,
-    gust: Number(pick(cur, 'maxGustSpeed', 'MaxGustSpeed') || 0),
-    pres: Number(pick(cur, 'pressure', 'Pressure') || 0),
-    mvDir: pick(cur, 'movingDirection', 'MovingDirection') || '',
-    mvSpd: Number(pick(cur, 'movingSpeed', 'MovingSpeed') || 0),
+    gust: num(pick(cur, 'MaxGustSpeed', 'maxGustSpeed')) || 0,
+    pres: num(pick(cur, 'PressureCenter', 'pressureCenter', 'Pressure', 'pressure')) || 0,
+    mvDir: pick(cur, 'MovingDirection', 'movingDirection') || '',
+    mvSpd: num(pick(cur, 'MovingSpeed', 'movingSpeed')) || 0,
     r15,
     track: ff.map(f => ({
-      tau: Number(pick(f, 'tau', 'Tau') || 0),
-      pos: parseLL(pick(f, 'coordinate', 'Coordinate')),
-      vmax: Number(pick(f, 'maxWindSpeed', 'MaxWindSpeed') || 0),
-      r70: Math.round(Number(pick(f, 'radiusOf70PercentProbability', 'RadiusOf70PercentProbability') || 0)),
-    })).filter(f => f.pos).sort((a, b) => a.tau - b.tau),
-    past: fixes.map(f => parseLL(pick(f, 'coordinate', 'Coordinate'))).filter(Boolean),
+      tau: tauOf(f),
+      pos: fixCoord(f),
+      vmax: num(pick(f, 'MaxWindSpeed', 'maxWindSpeed')) || 0,
+      r70: Math.round(galeRadius(f)),
+    })).filter(f => f.pos && Number.isFinite(f.tau) && f.tau > 0)
+       .sort((a, b) => a.tau - b.tau),
+    past: fixes.map(fixCoord).filter(Boolean),
   };
 }
 
@@ -1051,80 +1110,66 @@ let ADV = [], _advDiag = '';
 // 只留跟雨有關的特報,風的部分已經有颱風警報單在管了。
 const RAIN_PHENOM = /(大雨|豪雨|豪大雨)/;
 
-function parseAdvisory(rec) {
-  const hc = pick(rec, 'hazardConditions', 'HazardConditions') || {};
-  let hz = pick(hc, 'hazards', 'Hazards');
-  if (hz && !Array.isArray(hz)) hz = pick(hz, 'hazard', 'Hazard');
-  if (!Array.isArray(hz)) return [];
+/* 天氣特報的結構在不同資料集之間不一致,照著某個固定形狀解析很容易整份落空。
+   改成遞迴走訪:沿途記住最近看到的 locationName 與 endTime,
+   碰到 phenomena 節點就記一筆 —— 欄位怎麼包都抓得到。
+   （作法取自使用者另一支程式 ARGUS，那邊已在真實環境跑過。）      */
+function walkAdvisory(node, loc, end, out) {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) { for (const x of node) walkAdvisory(x, loc, end, out); return; }
 
-  const out = [];
-  for (const h of hz) {
-    const info = pick(h, 'info', 'Info') || h;
-    const ph = pick(info, 'phenomena', 'Phenomena', 'phenomenon');
-    const kind = String((ph && typeof ph === 'object' ? pick(ph, 'value', 'Value') : ph) || '').trim();
-    if (!kind || !RAIN_PHENOM.test(kind)) continue;
+  const lRaw = pick(node, 'locationName', 'LocationName', 'countyName', 'CountyName');
+  const nextLoc = (typeof lRaw === 'string' && lRaw.trim()) ? lRaw.trim() : loc;
 
-    const vt = pick(h, 'validTime', 'ValidTime') || {};
-    const start = Date.parse(pick(vt, 'startTime', 'StartTime') || '');
-    const end = Date.parse(pick(vt, 'endTime', 'EndTime') || '');
+  let nextEnd = end;
+  const vt = pick(node, 'validTime', 'ValidTime');
+  const e = Date.parse(pick(vt || node, 'endTime', 'EndTime') || '');
+  if (Number.isFinite(e)) nextEnd = e;
 
-    // 影響地區可能在 hazard 裡,也可能是這筆 record 本身的 locationName
-    let areas = [];
-    const aa = pick(info, 'affectedAreas', 'AffectedAreas') || {};
-    const loc = pick(aa, 'location', 'Location');
-    if (Array.isArray(loc)) {
-      areas = loc.map(x => String(pick(x, 'locationName', 'LocationName') || '').trim()).filter(Boolean);
-    }
-    if (!areas.length) {
-      const n = pick(rec, 'locationName', 'LocationName');
-      if (n) areas = [String(n).trim()];
-    }
-    out.push({
-      kind, areas,
-      start: Number.isFinite(start) ? start : 0,
-      end: Number.isFinite(end) ? end : 0,
-    });
-  }
-  return out;
+  const ph = pick(node, 'phenomena', 'Phenomena');
+  const kind = String((ph && typeof ph === 'object' ? pick(ph, 'value', 'Value') : ph) || '').trim();
+  if (kind) out.push({ kind, area: nextLoc, end: nextEnd });
+
+  for (const k in node) walkAdvisory(node[k], nextLoc, nextEnd, out);
 }
 
-/* 豪大雨特報是 W-C0033-003。
-   -001 是「各縣市目前之天氣警特報」、-002 是「內容及所影響之區域」,
-   那兩支也可能帶到雨的特報,所以 -003 取不到就依序往下試。
-   （上一版打的是 -001,那支不是豪大雨專用的。）                 */
-const ADV_SETS = ['W-C0033-003', 'W-C0033-002', 'W-C0033-001'];
+/* 資料集順序:-002「各別天氣警特報之內容及所影響之區域」欄位最完整,
+   -003 是豪大雨專用,-001 是各縣市目前的警特報。取到雨類特報就停。  */
+const ADV_SETS = ['W-C0033-002', 'W-C0033-003', 'W-C0033-001'];
 
 async function fetchAdvisory(key) {
-  let j = null, lastErr = '';
-  for (const ds of ADV_SETS) {
-    try { j = await cwaJson(ds, key); if (j) break; }
-    catch (e) { lastErr = (e && e.message) || String(e); }
-  }
-  if (!j) { _advDiag = lastErr || '天氣特報三個資料集都取不到'; return []; }
-  const recs = (j && j.records) || {};
-  let list = pick(recs, 'record', 'Record', 'location', 'Location');
-  if (list && !Array.isArray(list)) list = pick(list, 'record', 'location');
-  if (!Array.isArray(list)) { _advDiag = '天氣特報回應的結構認不出來'; return []; }
   const now = Date.now();
-  const all = list.flatMap(parseAdvisory)
-    // 已經過期的特報不算數,擺著會讓人以為還在生效
-    .filter(a => !a.end || a.end > now);
-  _advDiag = '';
-  // 同一種特報合併地區,不要一個縣市一張卡
-  const byKind = new Map();
-  for (const a of all) {
-    const k = a.kind;
-    const cur = byKind.get(k) || { kind: k, areas: [], start: a.start, end: a.end };
-    cur.areas = [...new Set([...cur.areas, ...a.areas])];
-    cur.end = Math.max(cur.end, a.end);
-    byKind.set(k, cur);
+  let lastErr = '';
+  for (const ds of ADV_SETS) {
+    let j;
+    try { j = await cwaJson(ds, key); }
+    catch (e) { lastErr = (e && e.message) || String(e); continue; }
+    if (!j) continue;
+
+    const raw = [];
+    walkAdvisory(j.records || j, '', 0, raw);
+    const rain = raw
+      .filter(a => RAIN_PHENOM.test(a.kind))     // 風有颱風警報單在管,低溫高溫與站台無關
+      .filter(a => !a.end || a.end > now);       // 過期的擺著會讓人以為還在生效
+    if (!rain.length) continue;
+
+    const byKind = new Map();                    // 同一種特報合併地區,不要一縣市一張卡
+    for (const a of rain) {
+      const cur = byKind.get(a.kind) || { kind: a.kind, areas: [], end: 0 };
+      if (a.area && !cur.areas.includes(a.area)) cur.areas.push(a.area);
+      cur.end = Math.max(cur.end, a.end || 0);
+      byKind.set(a.kind, cur);
+    }
+    const order = ['超大豪雨', '大豪雨', '豪雨', '大雨'];
+    _advDiag = '';
+    return [...byKind.values()].sort((x, y) => {
+      const a = order.findIndex(o => x.kind.includes(o));
+      const b = order.findIndex(o => y.kind.includes(o));
+      return (a < 0 ? 99 : a) - (b < 0 ? 99 : b);
+    });
   }
-  // 嚴重度由大到小
-  const order = ['超大豪雨', '大豪雨', '豪雨', '大雨'];
-  return [...byKind.values()].sort((x, y) => {
-    const i = order.findIndex(o => x.kind.includes(o)), j = order.findIndex(o => y.kind.includes(o));
-    return (i < 0 ? 99 : i) - (j < 0 ? 99 : j);
-  });
+  _advDiag = lastErr;
+  return [];
 }
 
 /* ── 中央氣象署 O-A0002-001 自動雨量站 ──────────────────────
