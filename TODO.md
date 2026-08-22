@@ -12,7 +12,6 @@
 | 項目 | 狀態 | 要做什麼 |
 |---|---|---|
 | 後端免金鑰管線 | ✗ **檔案不在這個 repo** | `scripts/fetch_typhoon.py` 與 `.github/workflows/typhoon.yml` 在上一輪寫過，但沒有隨著程式碼一起帶過來，這個 repo 裡沒有。`data/typhoon.json` 目前是 `hasKey:false` 的空殼，前端會自動略過。要恢復免金鑰路徑，得先把抓取腳本補回來，再到 Settings → Secrets → Actions 設 `CWA_API_KEY`——**只設 Secret 不會有任何作用**。 |
-| 站台網址 | ⏸ 等一個開關 | `.github/workflows/pages.yml` 已就緒，掛在預設分支 `claude/feng-shao-lgn3wn` 上。但 Actions 的權杖開不了 Pages（`Create Pages site failed: Resource not accessible by integration`），要 repo 擁有者到 **Settings → Pages → Source 選 GitHub Actions** 按一次；之後重跑 workflow 就會有網址 `https://xin7355-collab.github.io/GALEPOST/`。 |
 | 中央氣象署實測回應 | ✗ 未對過 | 沙箱連不到 `opendata.cwa.gov.tw`，所有 CWA 解析都是拿仿造的回應測的。第一次接上真的金鑰時，要看一眼「官方警報卡」的內容是否與氣象署網站一致（特別是影響地區與發布時間）。 |
 | CORS 代理 | △ 有退路但未實測 | 瀏覽器直連氣象署常被 CORS 擋。程式已經是「直連失敗 → 改走代理」，代理網址填在設定頁。實際擋不擋、代理格式對不對，要有真環境才知道。 |
 | Docker 打包 | ✗ **檔案不在這個 repo** | `site/Dockerfile`、`docker-compose.yml` 同樣沒帶過來。不過站台是純靜態檔，任何靜態伺服器都能服務，Docker 並非必要。 |
@@ -53,6 +52,11 @@ Windy 已經嵌進去了，但只是一張獨立的頁籤。可以考慮讓它�
 ---
 
 ## 三、這一輪已完成（2026-08-22 第二輪）
+
+- **站台上線**：https://xin7355-collab.github.io/GALEPOST/
+  （2026-08-22 部署成功。前兩次失敗是 Actions 權杖開不了 Pages，
+  由 repo 擁有者在 Settings → Pages 把 Source 設成 GitHub Actions 之後就通了。
+  以後推到 `claude/feng-shao-lgn3wn` 會自動重新部署。）
 
 - **Leaflet 收進 repo**（`vendor/leaflet/`，1.9.4，取自 npm 官方套件）。
   以前從 unpkg 載，斷線時地圖整個不見；現在 service worker 一併快取，
