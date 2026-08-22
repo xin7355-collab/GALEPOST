@@ -930,6 +930,66 @@ async function cwaJson(dataset, key) {
   } finally { clearTimeout(t); }
 }
 
+/* ── 中央氣象署 W-C0034-003 颱風侵襲機率 ────────────────────
+   這是官方直接給的各縣市侵襲百分比，不是我們算的。
+   畫面上其他所有數字都是推估，只有這個和警報單是官方的，
+   所以擺在颱風頁最前面，並且明白標成「官方數字」。
+   沒辦法在這個環境對真實回應，欄位名稱用 pick 多接幾種寫法；
+   真的認不出來就什麼都不顯示，並記下原因 —— 寧可空著，
+   也不要因為讀錯欄位而端出一個看起來像官方機率的錯數字。      */
+let PROB = [], _probDiag = '';
+
+function parseProbRecord(r) {
+  const wrap = pick(r, 'probabilities', 'Probabilities') || {};
+  let rows = pick(wrap, 'probability', 'Probability');
+  if (!Array.isArray(rows)) rows = pick(r, 'probability', 'Probability');
+  if (!Array.isArray(rows)) return null;
+
+  const areas = rows.map(x => {
+    const name = pick(x, 'locationName', 'LocationName', 'countyName', 'CountyName', 'areaName');
+    // 百分比欄位在不同版本叫過 probability / percent / value
+    const raw = pick(x, 'probability', 'Probability', 'percent', 'Percent', 'value', 'Value');
+    const pct = Number(String(raw == null ? '' : raw).replace('%', '').trim());
+    return (name && Number.isFinite(pct) && pct >= 0 && pct <= 100)
+      ? { name: String(name).trim(), pct } : null;
+  }).filter(Boolean).sort((a, b) => b.pct - a.pct);
+
+  if (!areas.length) return null;
+  return {
+    id: String(pick(r, 'cwaTdNo', 'CwaTdNo', 'typhoonNo', 'TyphoonNo') ||
+               pick(r, 'typhoonName', 'TyphoonName') || ''),
+    en: String(pick(r, 'typhoonName', 'TyphoonName') || ''),
+    name: String(pick(r, 'cwaTyphoonName', 'CwaTyphoonName') || ''),
+    areas,
+  };
+}
+
+async function fetchProb(key) {
+  const j = await cwaJson('W-C0034-003', key);
+  const recs = (j && j.records) || {};
+  let list = pick(recs, 'record', 'Record', 'tropicalCyclones', 'TropicalCyclones');
+  // 有些資料集把清單再包一層
+  if (list && !Array.isArray(list)) list = pick(list, 'tropicalCyclone', 'TropicalCyclone', 'record');
+  if (!Array.isArray(list)) { _probDiag = '侵襲機率回應的結構認不出來'; return []; }
+  const out = list.map(parseProbRecord).filter(Boolean);
+  _probDiag = (list.length && !out.length) ? '侵襲機率有回應但欄位認不出來' : '';
+  return out;
+}
+
+/* 挑出「目前選中的那顆颱風」的機率。
+   編號 → 英文名 → 中文名,三種都對不上就什麼都不顯示。
+   這裡刻意沒有「只有一筆就直接用」的退路:那會在雙颱時把另一顆的
+   侵襲機率掛到這一顆頭上,而這是頁面上唯一被標成「官方數字」的東西,
+   掛錯了比空白危險得多。                                          */
+function probFor(ty) {
+  if (!ty || !PROB.length) return null;
+  const k = tyKey(ty);
+  return PROB.find(p => p.id && p.id === k)
+      || PROB.find(p => p.en && ty.en && p.en === ty.en)
+      || PROB.find(p => p.name && ty.name && p.name === ty.name)
+      || null;
+}
+
 /* ── 中央氣象署 O-A0001-001 自動氣象站即時觀測 ──────────────
    畫面上其他每一個風級都是模型推估出來的,這裡是唯一真的量到的數字。
    兩者並排看:差一兩級屬正常(模型算的是海面持續風,測站在地面又被地形擋),
@@ -1302,7 +1362,7 @@ async function loadTyphoon(manual) {
   const obsP = key
     ? fetchObs(key).then(r => { OBS = r; OBS_AT = Date.now(); })
                    .catch(() => { OBS = []; OBS_AT = 0; })
-    : Promise.resolve().then(() => { OBS = []; OBS_AT = 0; });
+    : Promise.resolve().then(() => { OBS = []; OBS_AT = 0; PROB = []; });
   try {
     let all = [];
     // ① 站台端靜態資料：不需要任何人自備授權碼，優先用
@@ -1322,10 +1382,11 @@ async function loadTyphoon(manual) {
     if (!all.length && key) {
       // 路徑與警報單一起抓：兩者互不相干，警報單掛掉不該影響路徑，
       // 所以用 allSettled 而不是讓任一個失敗把另一個一起帶走。
-      const [pathRes, warnRes] = await Promise.allSettled([
-        fetchCWAAll(key), fetchWarningCWA(key),
+      const [pathRes, warnRes, probRes] = await Promise.allSettled([
+        fetchCWAAll(key), fetchWarningCWA(key), fetchProb(key),
       ]);
       if (warnRes.status === 'fulfilled') DB.ty.warning = warnRes.value;
+      PROB = probRes.status === 'fulfilled' ? probRes.value : [];
       if (pathRes.status === 'fulfilled') {
         all = pathRes.value || [];
         if (!all.length) {
@@ -1638,7 +1699,7 @@ function renderTyphoon(o) {
     ['中心位置', fmtCoord(ty.pos.lat, ty.pos.lng)],
     ['距台灣', `${dTw} km · 台灣之${dirName(brg)}`],
   ];
-  body.innerHTML = typhoonPicker() + `<div class="card ty-hero">
+  body.innerHTML = typhoonPicker() + probCard(ty) + `<div class="card ty-hero">
     <div class="glow" style="background:${bfColor(bfV)}"></div>
     <div class="ty-top">${bfBadge(bfV, 'lg')}
       <div class="ty-nm"><b>${esc(DB.ty.name || ty.name)}</b>
@@ -1650,6 +1711,32 @@ function renderTyphoon(o) {
   renderImpact();
   renderForecast();
   paintBfBar(Math.max(bfV, ...DB.stations.map(s => (SERIES ? stationImpact(SERIES, s, DB.cfg)?.now.bf : -1) ?? -1)));
+}
+
+/* 侵襲機率卡。這是整個頁面上唯一一組「官方直接給的預測數字」,
+   其他全是本機推估,所以標題就寫明是官方資料,不跟推估混在一起。
+   只列前幾個縣市:值班的人要的是「我這裡有多少機率」,不是全台一覽表。 */
+function probCard(ty) {
+  const p = probFor(ty);
+  if (!p) return '';
+  const top = p.areas.slice(0, 6);
+  const col = v => v >= 50 ? 'var(--no)' : v >= 20 ? 'var(--sb)' : 'var(--acc)';
+  return `<div class="card pad" style="margin-bottom:0.75rem;border-color:var(--edge3)">
+    <div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem">
+      <b style="font-size:0.9375rem">未來 120 小時侵襲機率</b>
+      <span style="font-size:0.6875rem;color:var(--ok);border:1px solid var(--ok);
+        border-radius:0.25rem;padding:1px 0.375rem">中央氣象署官方數字</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:0.375rem">
+      ${top.map(a => `<div style="flex:1 1 6.5rem;min-width:6rem;border:1px solid var(--edge);
+        border-radius:var(--r2);padding:0.4375rem 0.5rem;background:var(--surf2)">
+        <div style="font-family:var(--mono);font-size:1.0625rem;font-weight:700;color:${col(a.pct)}">${a.pct}%</div>
+        <div style="font-size:0.75rem;color:var(--fg3);overflow:hidden;text-overflow:ellipsis;
+          white-space:nowrap">${esc(a.name)}</div></div>`).join('')}
+    </div>
+    <span class="sub" style="display:block;margin-top:0.5rem">
+      取自 W-C0034-003，依機率高低排序，只列前 ${top.length} 個
+      （共 ${p.areas.length} 個地區）。這是官方發布的機率，與本程式其他推估值無關。</span>
+  </div>`;
 }
 
 /* 雙颱（含以上）時的選擇列。只有一顆就不顯示，免得多佔一行版面。 */
