@@ -297,6 +297,25 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .leaflet-control-attribution{background:rgba(8,14,19,.72)!important;color:var(--fg4)!important;
   font-size:0.625rem!important;padding:1px 0.375rem}
 .leaflet-control-attribution a{color:var(--fg3)!important}
+/* 颱風符號與常駐標籤。
+   四顆颱風同時在圖上時,tooltip 要點一下才看得到,等於看不到 ——
+   名稱與時間直接畫成標籤,掃一眼就知道哪顆是哪顆。
+   選中的用紅色、其餘用琥珀色,和面板上的選擇列對得起來。      */
+.ty-eye{font-size:1.625rem;line-height:2.125rem;text-align:center;
+  text-shadow:0 0 8px #EF5B4C,0 0 3px #000;animation:ty-spin 4s linear infinite}
+.ty-eye.sec{font-size:1.375rem;line-height:1.875rem;filter:hue-rotate(25deg);
+  text-shadow:0 0 8px #EFAA35,0 0 3px #000}
+@keyframes ty-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+/* 會轉的東西在值班畫面上很吵,系統設定要求減少動態就停下來。 */
+@media (prefers-reduced-motion:reduce){.ty-eye{animation:none}}
+.ty-wrap{display:flex;justify-content:center}
+.ty-lb{font:700 0.625rem/1.25 var(--mono);color:#FFE3DF;background:rgba(120,25,20,.88);
+  border:1px solid #EF5B4C;border-radius:0.5rem;text-align:center;
+  padding:2px 5px;white-space:nowrap;cursor:pointer}
+.ty-lb.sec{color:#FFE9C2;background:rgba(120,70,10,.88);border-color:#EFAA35}
+.ty-lb.fc{color:#DFF3FF;background:rgba(12,44,60,.85);border-color:#54C7EA;font-weight:600}
+.ty-lb.ex{color:#FFE9C2;background:rgba(90,58,10,.85);border-color:#EFAA35;font-weight:600}
+.ty-lb.now{color:#FFFFFF;background:rgba(160,30,25,.92);border-color:#FFFFFF}
 .impact{width:100%;min-width:24rem;border-collapse:collapse;font-size:0.8125rem}
 /* 衝擊表多了「實測」欄,窄螢幕上寧可讓它橫向捲動,也不要把欄位擠到看不懂。 */
 .impact.wide{min-width:39rem}
@@ -814,7 +833,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v7';
+const APP_VER = 'v8';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2168,6 +2187,10 @@ function drawTimeMarker() {
     radius: 6, color: '#FFFFFF', weight: 2,
     fillColor: bfColor(ms2bf(s.vmax)), fillOpacity: 1,
   }).bindTooltip(`+${s.h}h　${fmtShort(s.t)}　${bfLabel(ms2bf(s.vmax))}`).addTo(TMARK);
+  // 拖到的那個時刻也標出來,白框紅底,跟預報點的藍標籤分得開
+  L.marker([s.pos.lat, s.pos.lng], {
+    icon: tyTag(`${fmtShort(s.t)}<br>+${s.h}h`, 'now', -6), zIndexOffset: 1400,
+  }).addTo(TMARK);
 }
 
 function renderImpact() {
@@ -2309,6 +2332,44 @@ function initBasemaps(map) {
   });
 }
 
+/* 颱風符號（會轉的 🌀）與常駐標籤。
+   做法取自使用者另一支程式 ARGUS —— 四顆颱風同圖時，
+   靠 tooltip 認不出來，名稱與時間要直接畫在圖上。          */
+const tyEye = sel => L.divIcon({
+  className: '', iconSize: [34, 34], iconAnchor: [17, 17],
+  html: `<div class="ty-eye${sel ? '' : ' sec'}">🌀</div>`,
+});
+
+// 標籤寬度隨字數變,外面包一層 flex 置中,長短名稱都對得準中心點。
+/* 預報點標籤在縮小時會擠成一團,疊在一起等於全部看不見。
+   依螢幕距離疏化:離已保留的標籤太近就藏起來,放大之後自然再出現。
+   颱風名稱標籤永遠保留 —— 那是最該看見的東西,先佔位。      */
+let FCLABELS = [], ANCHORS = [];
+const LABEL_MIN_X = 52, LABEL_MIN_Y = 26;
+
+function declutterLabels() {
+  if (!MAP) return;
+  const kept = [];
+  for (const m of ANCHORS) {
+    if (!m.getElement()) continue;
+    kept.push(MAP.latLngToContainerPoint(m.getLatLng()));
+  }
+  for (const m of FCLABELS) {
+    const el = m.getElement();
+    if (!el) continue;
+    const p = MAP.latLngToContainerPoint(m.getLatLng());
+    const clash = kept.some(q =>
+      Math.abs(q.x - p.x) < LABEL_MIN_X && Math.abs(q.y - p.y) < LABEL_MIN_Y);
+    el.style.display = clash ? 'none' : '';
+    if (!clash) kept.push(p);
+  }
+}
+
+const tyTag = (html, cls, dy) => L.divIcon({
+  className: '', iconSize: [96, 30], iconAnchor: [48, dy == null ? -8 : dy],
+  html: `<div class="ty-wrap"><div class="ty-lb${cls ? ' ' + cls : ''}">${html}</div></div>`,
+});
+
 function drawMap(ty) {
   if (window.__noLeaflet || typeof L === 'undefined' || !ty.pos) { $('#map').style.display = 'none'; return; }
   $('#map').style.display = '';
@@ -2316,12 +2377,15 @@ function drawMap(ty) {
     MAP = L.map('map', { attributionControl: true, zoomControl: true }).setView([23.7, 121], 5);
     MAP.attributionControl.setPrefix('');
     initBasemaps(MAP);
+    MAP.on('zoomend', declutterLabels);
+    MAP.on('moveend', declutterLabels);
   }
   if (MLAYER) MAP.removeLayer(MLAYER);
   // 時刻標記是獨立圖層,上面那行清不到它。只把變數設成 null 會讓舊圖層
   // 留在地圖上變成孤兒,每重畫一次多疊一個,所以要真的移除再重掛。
   if (TMARK) { MAP.removeLayer(TMARK); TMARK = null; }
   MLAYER = L.layerGroup().addTo(MAP);
+  FCLABELS = []; ANCHORS = [];
   const pts = [[ty.pos.lat, ty.pos.lng]];
 
   // 彩色底圖（尤其衛星影像）底下什麼顏色都有,細線會被吃掉。
@@ -2331,13 +2395,35 @@ function drawMap(ty) {
     return L.polyline(latlngs, opt).addTo(MLAYER);
   };
 
+  // ── 其他同時活動的颱風：琥珀色、輕量、可點選切換 ──────────
+  // 先畫,讓選中的那顆疊在最上層。
+  // 一併納入 fitBounds:多颱時要能一眼看到全部幾顆在哪裡,
+  // 代價是台灣會縮小一點 —— station 標記仍然畫著,要看細節就點選擇列切換,
+  // 切過去之後這顆就變成主要颱風,框選也會跟著收斂。
+  (DB.ty.list || []).forEach(o => {
+    if (!o || !o.pos || tyKey(o) === tyKey(ty)) return;
+    const k = tyKey(o), go = () => pickTyphoon(k);
+    if (o.track && o.track.length) {
+      L.polyline([[o.pos.lat, o.pos.lng], ...o.track.map(f => [f.pos.lat, f.pos.lng])],
+        { color: '#EFAA35', weight: 1.6, dashArray: '5,5', opacity: .75 }).on('click', go).addTo(MLAYER);
+      o.track.forEach(f => L.circleMarker([f.pos.lat, f.pos.lng],
+        { radius: 2.5, color: '#EFAA35', fillColor: '#B4700B', fillOpacity: 1, weight: 1 }).addTo(MLAYER));
+    }
+    L.circle([o.pos.lat, o.pos.lng], {
+      radius: Math.max(o.r15, 0) * 1000, color: '#EFAA35', weight: 1.4,
+      dashArray: '4,4', fillColor: '#EFAA35', fillOpacity: .06,
+    }).addTo(MLAYER);
+    L.marker([o.pos.lat, o.pos.lng], { icon: tyEye(false), zIndexOffset: 1100 })
+      .bindTooltip(`${o.name}　${bfLabel(ms2bf(o.vmax))}（點選切換）`).on('click', go).addTo(MLAYER);
+    ANCHORS.push(
+      L.marker([o.pos.lat, o.pos.lng], { icon: tyTag(`${esc(o.name)}<br>${fmtShort(o.t0)}`, 'sec'), zIndexOffset: 1090 })
+        .on('click', go).addTo(MLAYER));
+    pts.push([o.pos.lat, o.pos.lng]);
+  });
+
+  // ── 選中的颱風：完整 ────────────────────────────────────
   if (ty.past.length > 1)
     cased(ty.past.map(p => [p.lat, p.lng]), { color: '#A8C6D6', weight: 2 });
-
-  L.circle([ty.pos.lat, ty.pos.lng], { radius: ty.r15 * 1000, color: '#EF5B4C', weight: 1.8, fillOpacity: .14 })
-    .bindTooltip(`七級風半徑 ${ty.r15} km`).addTo(MLAYER);
-  L.circleMarker([ty.pos.lat, ty.pos.lng], { radius: 7, color: '#FFFFFF', weight: 2, fillColor: '#EF5B4C', fillOpacity: 1 })
-    .bindTooltip(`${DB.ty.name || ty.name}　${bfLabel(ms2bf(ty.vmax))}`).addTo(MLAYER);
 
   if (TRACK.length) {
     const tp = TRACK.map(f => [f.pos.lat, f.pos.lng]);
@@ -2349,20 +2435,25 @@ function drawMap(ty) {
       if (f.r70) L.circle([f.pos.lat, f.pos.lng], { radius: f.r70 * 1000, color: tcol, weight: 1.4, fill: false, opacity: .55 }).addTo(MLAYER);
       L.circleMarker([f.pos.lat, f.pos.lng], { radius: 4, color: '#08131A', weight: 1.2, fillColor: tcol, fillOpacity: 1 })
         .bindTooltip(`+${f.tau}h　${bfLabel(ms2bf(f.vmax))}${EXTRAP ? '（外推推估，非官方預報）' : ''}`).addTo(MLAYER);
+      // 每個預報點標上時刻與時距 —— 排班的人要的是「幾點」,不是「第幾個點」
+      FCLABELS.push(L.marker([f.pos.lat, f.pos.lng], {
+        icon: tyTag(`${fmtShort(ty.t0 + f.tau * 3600000)}<br>+${f.tau}h${EXTRAP ? ' 外推' : ''}`,
+                    EXTRAP ? 'ex' : 'fc', -6),
+      }).addTo(MLAYER));
       pts.push([f.pos.lat, f.pos.lng]);
     });
   }
-  // 其他同時活動的颱風：淡淡標一點就好,點下去才切換過去。
-  // 不納入 fitBounds,免得為了一顆遠在南海的颱風把台灣縮成一個點。
-  (DB.ty.list || []).forEach(o => {
-    if (!o || !o.pos || tyKey(o) === tyKey(ty)) return;
-    L.circleMarker([o.pos.lat, o.pos.lng], {
-      radius: 5, color: '#08131A', weight: 1.2,
-      fillColor: '#93B2C0', fillOpacity: .75,
-    }).bindTooltip(`${o.name}　${bfLabel(ms2bf(o.vmax))}（點選切換）`)
-      .on('click', () => pickTyphoon(tyKey(o)))
-      .addTo(MLAYER);
-  });
+
+  L.circle([ty.pos.lat, ty.pos.lng], {
+    radius: ty.r15 * 1000, color: '#EF5B4C', weight: 2,
+    fillColor: '#EF5B4C', fillOpacity: .10,
+  }).bindTooltip(`七級風半徑 ${ty.r15} km`).addTo(MLAYER);
+
+  L.marker([ty.pos.lat, ty.pos.lng], { icon: tyEye(true), zIndexOffset: 1300 })
+    .bindTooltip(`${DB.ty.name || ty.name}　${bfLabel(ms2bf(ty.vmax))}`).addTo(MLAYER);
+  ANCHORS.unshift(L.marker([ty.pos.lat, ty.pos.lng], {
+    icon: tyTag(`${esc(DB.ty.name || ty.name)}<br>${fmtShort(ty.t0)}`, ''), zIndexOffset: 1290,
+  }).addTo(MLAYER));
 
   DB.stations.forEach(s => {
     if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return;
@@ -2374,9 +2465,20 @@ function drawMap(ty) {
     }).bindTooltip(`${s.name}　${imp ? bfLabel(imp.now.bf) : S_LABEL[s.status]}`).addTo(MLAYER);
     pts.push([s.lat, s.lng]);
   });
-  if (pts.length > 1) MAP.fitBounds(L.latLngBounds(pts).pad(0.28));
+  /* 切到颱風頁的當下 #map 可能還沒有尺寸（剛從 display:none 出來）,
+     這時候 fitBounds 會拿 0×0 去算縮放,結果縮到 zoom 0 ——
+     整個世界擠成一團,颱風跟站台全部疊在畫面中央。
+     所以要先 invalidateSize 讓 Leaflet 量到真正的大小,再 fitBounds。 */
+  const fit = () => {
+    const good = pts.filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    if (good.length > 1) MAP.fitBounds(L.latLngBounds(good).pad(0.28));
+  };
+  MAP.invalidateSize();
+  fit();
   drawTimeMarker();                  // 主圖重畫後把時刻標記掛回去
-  setTimeout(() => MAP.invalidateSize(), 80);
+  declutterLabels();
+  // 版面若還在收斂（字級切換、旋轉螢幕）,晚一拍再量一次並重新框。
+  setTimeout(() => { MAP.invalidateSize(); fit(); declutterLabels(); }, 80);
 }
 
 /* ═══ 回報產出 ═══════════════════════════════════════════ */
