@@ -300,6 +300,18 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .impact{width:100%;min-width:24rem;border-collapse:collapse;font-size:0.8125rem}
 /* 衝擊表多了「實測」欄,窄螢幕上寧可讓它橫向捲動,也不要把欄位擠到看不懂。 */
 .impact.wide{min-width:39rem}
+/* 時間軸滑桿。用原生 range,但配色跟著介面走,預設的亮藍色在暗底上很突兀。 */
+.tl-r{width:100%;-webkit-appearance:none;appearance:none;background:transparent;margin:0.375rem 0}
+.tl-r::-webkit-slider-runnable-track{height:0.375rem;border-radius:0.1875rem;background:var(--edge2)}
+.tl-r::-moz-range-track{height:0.375rem;border-radius:0.1875rem;background:var(--edge2)}
+.tl-r::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:1.375rem;height:1.375rem;
+  border-radius:50%;background:var(--acc);border:2px solid var(--bg);margin-top:-0.5rem;cursor:pointer}
+.tl-r::-moz-range-thumb{width:1.375rem;height:1.375rem;border-radius:50%;background:var(--acc);
+  border:2px solid var(--bg);cursor:pointer}
+.tl-r:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+.tl-st{flex:1 1 7rem;min-width:6.5rem;display:flex;align-items:center;gap:0.4375rem;
+  border:1px solid var(--edge);border-radius:var(--r2);padding:0.375rem 0.5rem;background:var(--surf2)}
+.tl-st span:last-child{font-size:0.8125rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .impact th{font-size:0.6562rem;letter-spacing:.11em;color:var(--fg3);text-align:left;
   padding:0.5625rem 0.5rem;border-bottom:1px solid var(--edge2);font-weight:700}
 .impact td{padding:0.5625rem 0.5rem;border-bottom:1px solid var(--edge);font-family:var(--mono);color:var(--fg2)}
@@ -2114,18 +2126,90 @@ function warningCard() {
   return html;
 }
 
+/* ── 時間軸 ────────────────────────────────────────────────
+   逐時內插序列本來就算好了,只差一個介面。
+   排班的人最想知道的是「我交接的那個時刻,各站台是幾級風」,
+   拖到那一格看一眼就有答案,不必自己從尖峰時間反推。            */
+let TCUR = 0, TMARK = null;
+
+function timelineCard() {
+  if (!SERIES || SERIES.length < 2) return '';
+  const max = SERIES.length - 1;
+  if (TCUR > max) TCUR = 0;
+  return `<div class="sec"><h2>時間軸${EXTRAP ? '（外推推估）' : ''}</h2></div>
+  <div class="card pad" style="margin-bottom:0.75rem">
+    <input class="tl-r" type="range" id="tlR" min="0" max="${max}" step="1" value="${TCUR}"
+      oninput="onTimeline(this.value)" aria-label="預報時刻">
+    <div id="tlOut">${timelineOut()}</div>
+    <span class="sub" style="display:block;margin-top:0.375rem">
+      拖到交接的時刻，看那時候各站台是幾級風。
+      ${EXTRAP ? '目前路徑為外推推估，時間越遠越不可信。' : '依官方預報路徑逐時內插。'}</span>
+  </div>`;
+}
+
+function timelineOut() {
+  if (!SERIES || !SERIES[TCUR]) return '';
+  const s = SERIES[TCUR], bf = ms2bf(s.vmax), d = Math.round(distToTaiwan(s.pos));
+  const head = `<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0.5rem 0">
+    <b style="font-family:var(--mono);font-size:1rem;color:var(--acc)">${TCUR === 0 ? '現在' : '+' + s.h + ' h'}</b>
+    <span style="font-family:var(--mono);color:var(--fg2)">${fmtShort(s.t)}</span>
+    <span class="pill" style="background:${bfColor(bf)}">${bf} 級</span>
+    <span style="font-size:0.8125rem;color:var(--fg3)">距台灣 ${d} km</span></div>`;
+
+  const withXY = DB.stations.filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lng));
+  if (!withXY.length) return head;
+  const rows = withXY
+    .map(x => ({ name: x.name, bf: windAt(s, { lat: x.lat, lng: x.lng }).bf }))
+    .sort((a, b) => b.bf - a.bf);
+  return head + '<div style="display:flex;flex-wrap:wrap;gap:0.375rem">'
+    + rows.map(r => `<div class="tl-st">
+        <span class="pill" style="background:${bfColor(r.bf)}">${r.bf}</span>
+        <span>${esc(r.name)}</span></div>`).join('')
+    + '</div>';
+}
+
+function onTimeline(v) {
+  const max = SERIES ? SERIES.length - 1 : 0;
+  TCUR = clamp(parseInt(v, 10) || 0, 0, max);
+  // 滑桿自己拖的時候值已經對了,但從別處呼叫時要把把手一起移過去,
+  // 否則畫面顯示 +18h、滑桿卻停在最左邊,兩者對不起來。
+  const r = document.getElementById('tlR');
+  if (r && String(TCUR) !== r.value) r.value = String(TCUR);
+  const out = document.getElementById('tlOut');
+  if (out) out.innerHTML = timelineOut();
+  drawTimeMarker();
+}
+
+/* 地圖上的時刻標記。放在自己的圖層,重畫主圖時不會互相蓋掉。
+   拖到 0（現在）就撤掉,免得跟主標記重疊看不清楚。               */
+function drawTimeMarker() {
+  if (typeof L === 'undefined' || !MAP || !SERIES) return;
+  if (TMARK) { MAP.removeLayer(TMARK); TMARK = null; }
+  if (!TCUR || !SERIES[TCUR]) return;
+  const s = SERIES[TCUR];
+  TMARK = L.layerGroup().addTo(MAP);
+  L.circle([s.pos.lat, s.pos.lng], {
+    radius: Math.max(s.r15, 0) * 1000, color: '#FFFFFF', weight: 1.2,
+    dashArray: '4,4', fill: false, opacity: .65,
+  }).addTo(TMARK);
+  L.circleMarker([s.pos.lat, s.pos.lng], {
+    radius: 6, color: '#FFFFFF', weight: 2,
+    fillColor: bfColor(ms2bf(s.vmax)), fillOpacity: 1,
+  }).bindTooltip(`+${s.h}h　${fmtShort(s.t)}　${bfLabel(ms2bf(s.vmax))}`).addTo(TMARK);
+}
+
 function renderImpact() {
   const box = $('#tyImpact');
   if (!SERIES) { box.innerHTML = ''; return; }
   const withXY = DB.stations.filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
   if (!withXY.length) {
-    box.innerHTML = `<div class="sec"><h2>站台衝擊預判</h2></div>
+    box.innerHTML = timelineCard() + `<div class="sec"><h2>站台衝擊預判</h2></div>
       <div class="msg i">尚無站台填寫座標。到設定或站台編輯中填入座標後，這裡會逐站列出目前風級、尖峰風級、應完成關機時間與預估可復機時間。座標支援度分秒、十進位、海圖式等多種寫法。</div>`;
     return;
   }
   const rows = withXY.map(s => ({ s, i: stationImpact(SERIES, s, DB.cfg) }))
     .sort((a, b) => (b.i.peak.bf - a.i.peak.bf) || (a.i.km - b.i.km));
-  box.innerHTML = `<div class="sec"><h2>站台衝擊預判</h2></div>
+  box.innerHTML = timelineCard() + `<div class="sec"><h2>站台衝擊預判</h2></div>
   <div class="card" style="padding:0.25rem 0.625rem;margin-bottom:0.375rem;overflow-x:auto">
    <table class="impact wide"><tr>
      <th>站台</th><th>目前推估</th><th>實測</th><th>雨量</th><th>尖峰</th><th>應完成關機</th><th>預估可復機</th></tr>
@@ -2262,6 +2346,9 @@ function drawMap(ty) {
     initBasemaps(MAP);
   }
   if (MLAYER) MAP.removeLayer(MLAYER);
+  // 時刻標記是獨立圖層,上面那行清不到它。只把變數設成 null 會讓舊圖層
+  // 留在地圖上變成孤兒,每重畫一次多疊一個,所以要真的移除再重掛。
+  if (TMARK) { MAP.removeLayer(TMARK); TMARK = null; }
   MLAYER = L.layerGroup().addTo(MAP);
   const pts = [[ty.pos.lat, ty.pos.lng]];
 
@@ -2316,6 +2403,7 @@ function drawMap(ty) {
     pts.push([s.lat, s.lng]);
   });
   if (pts.length > 1) MAP.fitBounds(L.latLngBounds(pts).pad(0.28));
+  drawTimeMarker();                  // 主圖重畫後把時刻標記掛回去
   setTimeout(() => MAP.invalidateSize(), 80);
 }
 
@@ -2963,7 +3051,7 @@ if (DB.cfg.pin) lock();
 if (DB.cfg.auto) setAuto(true);
 window.openStation = openStation; window.openTypes = openTypes; window.openSort = openSort;
 window.openImportPreview = openImportPreview; window.loadTyphoon = loadTyphoon; window.go = go; window.openPin = openPin;
-window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief;
+window.pickTyphoon = pickTyphoon; window.copyBrief = copyBrief; window.onTimeline = onTimeline;
 
 </script>
 
