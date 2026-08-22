@@ -724,6 +724,21 @@ const DIR16 = ['北', '北北東', '東北', '東北東', '東', '東南東', '�
   '南', '南南西', '西南', '西南西', '西', '西北西', '西北', '北北西'];
 function dirName(b) { return DIR16[Math.round(((b % 360) + 360) % 360 / 22.5) % 16]; }
 
+// 中文方位字串轉角度。氣象署 movingDirection 給的是「西北西」這種字。
+const dirDeg = name => {
+  const i = DIR16.indexOf(String(name || '').trim());
+  return i < 0 ? null : i * 22.5;
+};
+
+// 由起點沿方位走 km 公里後的座標（大圓）。外推路徑用。
+function destPoint(p, brgDeg, km) {
+  const R = 6371, d = km / R, b = rad(brgDeg), la = rad(p.lat), lo = rad(p.lng);
+  const lat2 = Math.asin(Math.sin(la) * Math.cos(d) + Math.cos(la) * Math.sin(d) * Math.cos(b));
+  const lon2 = lo + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(la),
+                               Math.cos(d) - Math.sin(la) * Math.sin(lat2));
+  return { lat: deg(lat2), lng: ((deg(lon2) + 540) % 360) - 180 };
+}
+
 /* ── 台灣及離島輪廓（公開地理資料，供警報範圍推估） ────── */
 const TW_OUTLINE = [
   [25.30, 121.53], [25.16, 121.72], [25.01, 121.94], [24.85, 121.84], [24.60, 121.86],
@@ -1102,6 +1117,40 @@ async function fetchGDACS() {
   };
 }
 
+/* ═══ 外推路徑：官方沒給預報時的替代品 ═══════════════════
+   還是熱帶性低氣壓的時候，W-C0034-005 常常只有分析位置、沒有預報路徑，
+   這時什麼時機都算不出來。用移動向量直線外推可以補上，但這是
+   「假設它照現在的方向和速度直直走」，颱風並不會這樣走。
+   所以外推出來的東西一定要標明白，不能讓它看起來像官方預報 ——
+   拿外推的時間去排關機，跟拿官方預報去排，是兩件不同風險的事。   */
+const EXTRAP_MIN_KMH = 8;      // 移速低於此值不外推：慢速系統的方向沒有意義
+const EXTRAP_HOURS = 24;
+
+function motionOf(ty) {
+  const spd = Number(ty.mvSpd) || 0;
+  let brg = null;
+  // 方位優先用最近兩個分析點量出來的,比方位字串精確
+  if (Array.isArray(ty.past) && ty.past.length >= 2) {
+    const a = ty.past[ty.past.length - 2], b = ty.past[ty.past.length - 1];
+    if (distKm(a, b) > 1) brg = bearing(a, b);
+  }
+  if (brg == null) brg = dirDeg(ty.mvDir);
+  return (spd > 0 && brg != null) ? { spd, brg } : null;
+}
+
+function extrapolateTrack(ty) {
+  if (!ty || !ty.pos) return null;
+  if (ty.track && ty.track.length) return null;      // 有官方預報就絕不外推
+  const m = motionOf(ty);
+  if (!m || m.spd < EXTRAP_MIN_KMH) return null;
+  const out = [];
+  for (let tau = 6; tau <= EXTRAP_HOURS; tau += 6) {
+    // 強度不外推:我們沒有能力預報增強或減弱,沿用現值並在畫面上說明。
+    out.push({ tau, pos: destPoint(ty.pos, m.brg, m.spd * tau), vmax: ty.vmax, r70: 0 });
+  }
+  return out;
+}
+
 /* ═══ 逐時內插：把預報點補成每小時一筆 ═══════════════════ */
 function interpolate(ty) {
   const pts = [{ tau: 0, pos: ty.pos, vmax: ty.vmax, r15: ty.r15 }];
@@ -1225,11 +1274,16 @@ function advise(st, imp, cfg) {
 
 /* ═══ 取得颱風資料 ═══════════════════════════════════════ */
 let SERIES = null, WARN = null;
+// TRACK：目前實際採用的預報點（官方的，或外推出來的）。EXTRAP：是不是外推的。
+let TRACK = [], EXTRAP = false;
 
 function rebuildModel() {
   const ty = DB.ty.data;
-  if (!ty) { SERIES = null; WARN = null; return; }
-  SERIES = interpolate(ty);
+  if (!ty) { SERIES = null; WARN = null; TRACK = []; EXTRAP = false; return; }
+  const ex = extrapolateTrack(ty);
+  EXTRAP = !!ex;
+  TRACK = ex || ty.track || [];
+  SERIES = interpolate(ex ? Object.assign({}, ty, { track: ex }) : ty);
   WARN = SERIES.length > 1 ? predictWarnings(SERIES, DB.cfg.seaBuffer) : null;
 }
 
@@ -1617,6 +1671,10 @@ function typhoonPicker() {
 
 function warningCard() {
   if (!WARN) return `<div class="msg w">目前來源沒有官方預報路徑，無法推算警報時機。到設定填入中央氣象署授權碼即可啟用。</div>`;
+  // 外推來的時機和官方預報算出來的時機,風險完全不同,不能長得一樣。
+  const exNote = EXTRAP ? `<div class="msg w" style="margin-bottom:0.5rem">
+    以下時機是由<b>外推路徑</b>推算的，不是根據中央氣象署的預報路徑。
+    只能當作粗略參考，不建議直接拿來排關機時程。</div>` : '';
   const row = (icon, col, title, sub, val) =>
     `<div class="warnrow"><div class="wi" style="background:${col}22;color:${col}">${icon}</div>
      <div class="wt"><b>${title}</b><small>${sub}</small></div><div class="wv" style="color:${col}">${val}</div></div>`;
@@ -1631,7 +1689,8 @@ function warningCard() {
     return { sub: '暴風範圍已脫離', val: '<span style="color:var(--fg4)">預估可解除</span>' };
   };
   const s = state(WARN.sea), l = state(WARN.land);
-  let html = '<div class="sec"><h2>警報時機預判</h2></div><div class="card" style="margin-bottom:0.75rem">';
+  let html = `<div class="sec"><h2>警報時機預判${EXTRAP ? '（由外推路徑推算）' : ''}</h2></div>`
+    + exNote + '<div class="card" style="margin-bottom:0.75rem">';
   html += row('🌊', '#54C7EA', '海上颱風警報', s.sub, s.val);
   html += row('🏝', '#EFAA35', '陸上颱風警報', l.sub, l.val);
   html += row('🎯', '#EF5B4C', '中心最接近', WARN.cpa ? `距台灣最近約 ${Math.round(WARN.cpa.d)} 公里` : '—',
@@ -1705,16 +1764,21 @@ function obsHint() {
 function renderForecast() {
   const box = $('#tyFc');
   const ty = DB.ty.data;
-  if (!ty || !ty.track.length) { box.innerHTML = ''; return; }
-  box.innerHTML = `<div class="sec"><h2>路徑潛勢預報</h2></div>
+  if (!ty || !TRACK.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="sec"><h2>${EXTRAP ? '外推路徑（非官方預報）' : '路徑潛勢預報'}</h2></div>
+  ${EXTRAP ? `<div class="msg w" style="margin-bottom:0.5rem">
+    <b>以下不是中央氣象署的預報路徑。</b>目前來源只有分析位置，沒有官方預報，
+    這張表是假設它<b>照現在的方向（${esc(dirName(motionOf(ty) ? motionOf(ty).brg : 0))}）
+    與速度（${Math.round(ty.mvSpd)} km/h）直線前進</b>算出來的，強度沿用現值、不預測增強減弱。
+    颱風不會這樣走，時距越遠誤差越大。請以中央氣象署發布的警報單為準。</div>` : ''}
   <div class="card" style="padding:0.25rem 0.625rem;overflow-x:auto"><table class="impact">
-    <tr><th>時距</th><th>中心位置</th><th>近中心風</th><th>距台灣</th><th>70%機率半徑</th></tr>
-    ${ty.track.map(f => {
+    <tr><th>時距</th><th>中心位置</th><th>近中心風</th><th>距台灣</th><th>${EXTRAP ? '性質' : '70%機率半徑'}</th></tr>
+    ${TRACK.map(f => {
       const bf = ms2bf(f.vmax), d = Math.round(distToTaiwan(f.pos));
       return `<tr><td style="color:var(--acc)">+${f.tau}h</td>
         <td>${f.pos.lat.toFixed(1)}N ${f.pos.lng.toFixed(1)}E</td>
         <td><span class="pill" style="background:${bfColor(bf)}">${bf} 級</span></td>
-        <td>${d} km</td><td>${f.r70 || '—'} km</td></tr>`;
+        <td>${d} km</td><td>${EXTRAP ? '<span style="color:var(--sb)">外推</span>' : (f.r70 ? f.r70 + ' km' : '—')}</td></tr>`;
     }).join('')}</table></div>`;
 }
 
@@ -1794,13 +1858,16 @@ function drawMap(ty) {
   L.circleMarker([ty.pos.lat, ty.pos.lng], { radius: 7, color: '#FFFFFF', weight: 2, fillColor: '#EF5B4C', fillOpacity: 1 })
     .bindTooltip(`${DB.ty.name || ty.name}　${bfLabel(ms2bf(ty.vmax))}`).addTo(MLAYER);
 
-  if (ty.track.length) {
-    const tp = ty.track.map(f => [f.pos.lat, f.pos.lng]);
-    cased([[ty.pos.lat, ty.pos.lng], ...tp], { color: '#54C7EA', weight: 2.5, dashArray: '6,5' });
-    ty.track.forEach(f => {
-      if (f.r70) L.circle([f.pos.lat, f.pos.lng], { radius: f.r70 * 1000, color: '#54C7EA', weight: 1.4, fill: false, opacity: .55 }).addTo(MLAYER);
-      L.circleMarker([f.pos.lat, f.pos.lng], { radius: 4, color: '#08131A', weight: 1.2, fillColor: '#54C7EA', fillOpacity: 1 })
-        .bindTooltip(`+${f.tau}h　${bfLabel(ms2bf(f.vmax))}`).addTo(MLAYER);
+  if (TRACK.length) {
+    const tp = TRACK.map(f => [f.pos.lat, f.pos.lng]);
+    // 外推路徑用另一個顏色與更疏的虛線,一眼就看得出不是官方預報。
+    const tcol = EXTRAP ? '#EFAA35' : '#54C7EA';
+    cased([[ty.pos.lat, ty.pos.lng], ...tp],
+      { color: tcol, weight: 2.5, dashArray: EXTRAP ? '2,7' : '6,5' });
+    TRACK.forEach(f => {
+      if (f.r70) L.circle([f.pos.lat, f.pos.lng], { radius: f.r70 * 1000, color: tcol, weight: 1.4, fill: false, opacity: .55 }).addTo(MLAYER);
+      L.circleMarker([f.pos.lat, f.pos.lng], { radius: 4, color: '#08131A', weight: 1.2, fillColor: tcol, fillOpacity: 1 })
+        .bindTooltip(`+${f.tau}h　${bfLabel(ms2bf(f.vmax))}${EXTRAP ? '（外推推估，非官方預報）' : ''}`).addTo(MLAYER);
       pts.push([f.pos.lat, f.pos.lng]);
     });
   }
