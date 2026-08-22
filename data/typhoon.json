@@ -1,0 +1,7 @@
+{
+  "hasKey": false,
+  "updated": "",
+  "warning": null,
+  "typhoons": [],
+  "note": "空殼。repo 尚未設定 CWA_API_KEY Secret，後端管線未啟用；前端讀到 hasKey:false 會自動略過這條路徑。"
+}
