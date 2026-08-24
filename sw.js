@@ -6,7 +6,7 @@
  * 氣象資料是唯一的例外 —— 過期的颱風資訊比沒有資訊更危險,
  * 所以 CWA / GDACS 的請求一律直接走網路,絕不快取。
  */
-const CACHE = 'galepost-v22';
+const CACHE = 'galepost-v23';
 const SHELL = [
   './',
   './index.html',
@@ -60,6 +60,12 @@ self.addEventListener('fetch', e => {
       /(^|\.)windy\.com$/.test(url.hostname)) {
     return;
   }
+
+  /* 停班停課公告同理 —— 而且更嚴重:昨天的公告寫著「明天停止上班」,
+     今天拿快取讀到那一行,會直接讀成今天放假。
+     公告是透過代理取回來的,官方網址在 query string 裡,所以比對整串 URL
+     而不是 hostname —— 代理是誰、叫什麼名字,程式不該預設。 */
+  if (/dgpa\.gov\.tw/.test(req.url)) return;
 
   // 颱風資料:網路優先,離線才退回快取。
   // 這份會隨颱風動態改變,拿快取優先會慢一輪;但離線時有舊的總比沒有好,
