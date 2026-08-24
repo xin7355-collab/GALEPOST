@@ -914,7 +914,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v12';
+const APP_VER = 'v13';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2079,6 +2079,48 @@ function rainCell(st) {
     + `時雨 ${v(r.h1)}　${esc(r.name)} ${Math.round(rb.km)}km</span></td>`;
 }
 
+/* ── 時間的講法 ────────────────────────────────────────────
+   通報上不會寫「8/24 22:00」,會寫「今日晚間 22:00」——
+   值班的人不必自己把日期換算成「那是今天還是明天」。
+   當天=今日、隔天=明日、再隔天=後天,第四天起用星期。
+   超過一週還講「週三」會分不出是哪一個週三,所以改回日期。   */
+const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+
+function relDay(ts) {
+  const a = new Date(); a.setHours(0, 0, 0, 0);
+  const b = new Date(ts); b.setHours(0, 0, 0, 0);
+  const n = Math.round((b - a) / 86400000);
+  if (n === 0) return '今日';
+  if (n === 1) return '明日';
+  if (n === 2) return '後天';
+  if (n >= 3 && n <= 6) return '週' + WEEK[b.getDay()];
+  if (n === -1) return '昨日';
+  return `${b.getMonth() + 1}/${b.getDate()}`;
+}
+
+// 一天之內的時段。22:00 講「晚間」,05:30 講「清晨」。
+function dayPart(h) {
+  if (h < 5) return '凌晨';
+  if (h < 8) return '清晨';
+  if (h < 11) return '上午';
+  if (h < 13) return '中午';
+  if (h < 17) return '午後';
+  if (h < 19) return '傍晚';
+  if (h < 23) return '晚間';
+  return '深夜';
+}
+
+// 「今日晚間 22:00」
+function fmtWhen(ts) {
+  const d = new Date(ts);
+  return `${relDay(ts)}${dayPart(d.getHours())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+// 「今日 08:23」——標頭用,不必講時段
+function fmtDayTime(ts) {
+  const d = new Date(ts);
+  return `${relDay(ts)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
 /* ── 氣象員播報 ────────────────────────────────────────────
    把距離、方位、強度、侵襲機率、最接近時間、豪大雨特報、
    各站台實測與衝擊，串成一段可以直接唸、直接抄進通報的話。
@@ -2087,79 +2129,92 @@ function rainCell(st) {
 function briefText() {
   const ty = DB.ty.data;
   if (!ty) return '';
+  const IN = '　';                       // 全形空格縮排,中文對得齊
   const L = [];
-  const t = new Date();
-  const hhmm = `${p2(t.getHours())}${p2(t.getMinutes())}`;
-
   const bf = ms2bf(ty.vmax);
   const d = Math.round(distToTaiwan(ty.pos));
   const brg = bearing({ lat: 23.7, lng: 121.0 }, ty.pos);
-  const src = ty.official ? '中央氣象署' : 'GDACS 全球災害警報系統（非官方）';
 
-  L.push(`${fmtMD(Date.now())} ${hhmm} 時氣象概況播報。`);
-  L.push(`${TC_FULL[tcClass(ty.vmax)] || ''}${ty.name}${ty.en && ty.en !== ty.name ? `（${ty.en}）` : ''}` +
-    `中心位於台灣之${dirName(brg)}` +
-    `約 ${d} 公里海面，近中心最大風 ${bfLabel(bf)}` +
-    `${ty.mvSpd ? `，以每小時 ${Math.round(ty.mvSpd)} 公里向${esc(dirZh(ty.mvDir) || dirName(brg))}移動` : ''}。` +
-    `資料來源：${src}。`);
+  L.push(`【今日氣象概況與警報】（更新時間：${fmtDayTime(DB.ty.at || Date.now())}）`);
 
-  // 官方警報單
+  // ── 颱風動態 ──
+  L.push('');
+  L.push(`${TC_FULL[tcClass(ty.vmax)] || '熱帶氣旋'} ${ty.name}` +
+    `${ty.en && ty.en !== ty.name ? `（${ty.en}）` : ''} 動態`);
+  L.push(`${IN}位置風力：臺灣${dirName(brg)}方 ${d} 公里海面，近中心最大風速 ${bfLabel(bf)}。`);
+  if (ty.mvSpd) {
+    L.push(`${IN}移動方向：向${dirZh(ty.mvDir) || dirName(brg)}移動（時速 ${Math.round(ty.mvSpd)} 公里）。`);
+  }
+  if (ty.pres) L.push(`${IN}中心氣壓：${Math.round(ty.pres)} 百帕。`);
+  if (WARN && WARN.cpa) {
+    L.push(`${IN}最接近時間：推估為${fmtWhen(WARN.cpa.t)}（距臺約 ${Math.round(WARN.cpa.d)} 公里）。`
+      + (EXTRAP ? '［外推路徑推算，非官方預報］' : ''));
+  }
+  if (!ty.official) L.push(`${IN}資料來源：GDACS 全球災害警報系統（非官方，僅觀測位置）。`);
+
+  // ── 颱風警報 ──
   const w = DB.ty.warning;
   if (w && w.active) {
-    L.push(`目前中央氣象署${w.isLand ? '已發布陸上颱風警報' : '已發布海上颱風警報'}` +
-      `${w.areas && w.areas.length ? `，警戒地區包括：${w.areas.slice(0, 6).join('、')}` : ''}。（官方發布）`);
+    L.push('');
+    L.push('颱風警報（中央氣象署發布）');
+    L.push(`${IN}${w.isLand ? '陸上颱風警報' : '海上颱風警報'}` +
+      `${w.areas && w.areas.length ? `：${w.areas.join('、')}` : ''}`);
   }
 
-  // 豪大雨特報
+  // ── 降雨特報 ──
   if (ADV.length) {
-    // 三句「中央氣象署發布X特報」唸起來很蠢,合成一句
-    L.push('中央氣象署發布' + ADV.map(a =>
-      `${a.kind}特報${a.areas.length ? `（${a.areas.slice(0, 8).join('、')}）` : ''}`
-    ).join('、') + '。（官方發布）');
+    L.push('');
+    L.push('降雨特報分級（中央氣象署發布）');
+    for (const a of ADV) {
+      L.push(`${IN}${a.kind}：${a.areas.length ? a.areas.join('、') : '（未列地區）'}`);
+    }
   }
 
-  // 最接近時間（推估）
-  if (WARN && WARN.cpa) {
-    L.push(`本程式推估最接近時間為 ${fmtShort(WARN.cpa.t)}，` +
-      `屆時距台灣約 ${Math.round(WARN.cpa.d)} 公里。` +
-      `${EXTRAP ? '（此時間由外推路徑推算，非官方預報）' : '（依官方預報路徑推估）'}`);
-  }
-
-  // 站台現況
+  // ── 站台衝擊 ──
   const withXY = DB.stations.filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lng));
+  let gaps = [];
   if (SERIES && withXY.length) {
     const rows = withXY.map(x => ({ x, i: stationImpact(SERIES, x, DB.cfg) }))
       .filter(r => r.i).sort((a, b) => b.i.peak.bf - a.i.peak.bf);
-    const worst = rows.slice(0, 3).map(({ x, i }) => {
-      const ob = nearestObs(x), obf = obsBf(ob);
-      return `${x.name}推估 ${i.now.bf} 級` +
-        (obf != null ? `、實測 ${obf} 級（${ob.o.name}）` : '') +
-        `，尖峰 ${i.peak.bf} 級於 ${fmtShort(i.peak.t)}` +
-        (i.deadline ? `，應於 ${fmtShort(i.deadline)} 前完成關機` : '，預估不需關機');
-    });
-    if (worst.length) L.push(`站台衝擊（推估）：${worst.join('；')}。`);
-
-    // 實測與推估落差大的要特別點出來
-    const gaps = rows.map(({ x, i }) => {
+    if (rows.length) {
+      L.push('');
+      L.push('站台衝擊（系統推估）');
+      for (const { x, i } of rows) {
+        const ob = nearestObs(x), obf = obsBf(ob);
+        L.push(`${IN}${x.name}：現場推估 ${i.now.bf} 級` +
+          (obf != null ? `／實測 ${obf} 級（${ob.o.name}）` : '') +
+          `，尖峰 ${i.peak.bf} 級於${fmtWhen(i.peak.t)}` +
+          // 復機只有在「真的需要關機」時才講。不需關機還接一句「可評估復機」
+          // 是矛盾的 —— stationImpact 在沒超過門檻時會把 resume 算成「現在」。
+          (i.deadline
+            ? `，應於${fmtWhen(i.deadline)}前完成關機`
+              + (i.resume ? `，${fmtWhen(i.resume.t)}起可評估復機` : '')
+            : '，推估不需關機') + '。');
+      }
+    }
+    gaps = rows.map(({ x, i }) => {
       const ob = nearestObs(x), obf = obsBf(ob);
       return (obf != null && Math.abs(obf - i.now.bf) >= 3)
         ? `${x.name}（推估 ${i.now.bf} 級、實測 ${obf} 級）` : null;
     }).filter(Boolean);
-    if (gaps.length) {
-      L.push(`注意：${gaps.join('、')}實測與推估相差三級以上，` +
-        `代表模型在該地形不可靠，請以現場實測為準，勿逕依本程式時間執行關機。`);
-    }
   }
 
-  // 雨量
+  // ── 雨量實測 ──
   const rains = withXY.map(x => {
     const rb = nearestRain(x);
     const lv = rb && rainLevel(rb.o);
-    return lv ? `${x.name}附近${rb.o.name}站 24 小時累積 ${Math.round(rb.o.h24)} mm（${lv.name}等級）` : null;
+    return lv ? `${IN}${x.name}：鄰近${rb.o.name}站 24 小時累積 ${Math.round(rb.o.h24)} 毫米（${lv.name}等級）。` : null;
   }).filter(Boolean);
-  if (rains.length) L.push(`雨量實測：${rains.join('；')}。`);
+  if (rains.length) { L.push(''); L.push('雨量實測（自動雨量站）'); L.push(...rains); }
 
-  L.push('以上除標明「官方」者外，均為本程式推估值，正式研判請以中央氣象署發布為準。');
+  // ── 注意事項 ──
+  L.push('');
+  if (gaps.length) {
+    L.push(`注意：${gaps.join('、')}實測與推估相差三級以上，代表模型在該地形不可靠，`
+      + '請以現場實測為準，勿逕依系統時間執行關機。');
+  }
+  L.push('注意事項：警報資料來自氣象署官方發布；系統推估時間與距離僅供參考，'
+    + '最新動態請依中央氣象署為準。');
   return L.join('\n');
 }
 
@@ -2223,7 +2278,9 @@ function warningCard() {
   const row = (icon, col, title, sub, val) =>
     `<div class="warnrow"><div class="wi" style="background:${col}22;color:${col}">${icon}</div>
      <div class="wt"><b>${title}</b><small>${sub}</small></div><div class="wv" style="color:${col}">${val}</div></div>`;
-  const two = (t, tag) => `${tag ? tag + '<br>' : ''}${fmtShort(t)}<br><span style="color:var(--fg4);font-weight:400">${relative(t)}</span>`;
+  // 「8/27 01:00 · 3.8 天後」要自己換算成星期幾;「週三凌晨 01:00」不用。
+  const two = (t, tag) => `${tag ? tag + '<br>' : ''}${fmtWhen(t)}`
+    + `<br><span style="color:var(--fg4);font-weight:400">${fmtShort(t)}　${relative(t)}</span>`;
 
   // 依目前處於哪個階段，講當下最該知道的那一件事
   const state = w => {
@@ -2272,8 +2329,9 @@ function timelineOut() {
   const s = SERIES[TCUR], bf = ms2bf(s.vmax), d = Math.round(distToTaiwan(s.pos));
   // 真實時刻放最大 —— 拖到某一格時,要的答案是「幾點」而不是「第幾小時」。
   const head = `<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;margin:0.5rem 0">
-    <b style="font-family:var(--mono);font-size:1.125rem;color:var(--fg)">${fmtShort(s.t)}</b>
-    <span style="font-family:var(--mono);font-size:0.8125rem;color:var(--acc)">${TCUR === 0 ? '現在' : '+' + s.h + ' 小時後'}</span>
+    <b style="font-size:1.0625rem;color:var(--fg)">${TCUR === 0 ? '現在' : fmtWhen(s.t)}</b>
+    <span style="font-family:var(--mono);font-size:0.8125rem;color:var(--acc)">${TCUR === 0
+      ? fmtShort(s.t) : '+' + s.h + ' 小時後'}</span>
     <span class="pill" style="background:${bfColor(bf)}">${bf} 級</span>
     <span style="font-size:0.8125rem;color:var(--fg3)">距台灣 ${d} km</span></div>`;
 
