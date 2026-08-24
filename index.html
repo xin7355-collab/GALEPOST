@@ -332,15 +332,19 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
 .ty-gr div{background:var(--surf2);padding:0.625rem 0.6875rem}
 .ty-gr b{display:block;font-family:var(--mono);font-size:1rem;font-weight:700;line-height:1.25}
 .ty-gr small{font-size:0.6562rem;color:var(--fg3);letter-spacing:.05em}
+/* 值一律靠右。原本是 flex-wrap:wrap + .wv 不可壓縮,兩三行的時刻值一擠不下
+   就整塊掉到下一行、看起來像置中 —— 同一張卡裡「預估不發布」在右邊、
+   「明日凌晨 02:00」卻在下面,讀起來像兩種不同的東西。 */
 .warnrow{display:flex;align-items:center;gap:0.75rem;padding:0.75rem 0.875rem;
-  border-bottom:1px solid var(--edge);flex-wrap:wrap}
+  border-bottom:1px solid var(--edge);flex-wrap:nowrap}
 .warnrow:last-child{border-bottom:none}
 .warnrow .wi{width:2.125rem;height:2.125rem;border-radius:0.5625rem;display:grid;place-items:center;
   font-size:0.9375rem;flex-shrink:0}
-.warnrow .wt{flex:1 1 55%;min-width:8rem}
+.warnrow .wt{flex:1 1 auto;min-width:0}
 .warnrow .wt b{display:block;font-size:0.875rem;font-weight:600}
-.warnrow .wt small{font-size:0.7188rem;color:var(--fg4)}
-.warnrow .wv{font-family:var(--mono);font-size:0.8438rem;text-align:right;flex-shrink:0;font-weight:600}
+.warnrow .wt small{font-size:0.7188rem;color:var(--fg4);display:block;overflow-wrap:anywhere}
+.warnrow .wv{font-family:var(--mono);font-size:0.8438rem;text-align:right;
+  flex:0 0 auto;max-width:54%;font-weight:600;line-height:1.45}
 #map{height:18.75rem;border-radius:var(--r);border:1px solid var(--edge);margin-bottom:0.75rem;
   background:var(--bg2)}
 /* 全螢幕地圖。站臺擠在西海岸,18.75rem 高的框裡看不出誰是誰。
@@ -1037,7 +1041,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v24';
+const APP_VER = 'v25';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2521,14 +2525,16 @@ function renderTyphoon(o) {
     ['距臺灣', `${dTw} km · 臺灣之${dirName(brg)}`],
   ];
   $('#tyPick').innerHTML = typhoonPicker();
-  $('#tyBrief').innerHTML = advisoryCard() + briefCard();
+  /* 停班停課（推估與官方公告）擺在播報頁籤 —— 那一頁本來就是
+     「要抄進通報、要唸出來的材料」,概況頁是看颱風本身的。 */
+  $('#tyBrief').innerHTML = advisoryCard() + suspendCard() + dgpaOfficialCard() + briefCard();
   body.innerHTML = `<div class="card ty-hero">
     <div class="glow" style="background:${bfColor(bfV)}"></div>
     <div class="ty-top">${bfBadge(bfV, 'lg')}
       <div class="ty-nm"><b>${esc(ty.name)}</b>
         <span>${ty.en && ty.en !== ty.name ? esc(ty.en) + '　' : ''}<i style="font-style:normal;font-weight:700;color:${bfColor(bfV)}">${TC_FULL[tcClass(ty.vmax)] || ''}</i>　近中心最大風 ${bfLabel(bfV)}</span></div></div>
     <div class="ty-gr">${g.map(([l, v]) => `<div><b>${esc(v)}</b><small>${l}</small></div>`).join('')}</div>
-  </div>` + warningCard() + suspendCard() + dgpaOfficialCard();
+  </div>` + warningCard();
 
   drawMap(ty);
   renderImpact();
@@ -2567,7 +2573,9 @@ function parseDgpaHtml(html) {
   DGPA_HEAD = head ? head.textContent.trim().replace(/\s+/g, ' ') : '';
   const upd = doc.querySelector('.Content_Updata');
   const m = upd && upd.textContent.match(/更新時間：([\d\/: -]+)/);
-  DGPA_UPD = m ? m[1].trim() : '';
+  /* 官方寫的是「2026/08/25 06:47:16」。年份與秒在這裡沒有用 ——
+     公告本來就是今天的,秒數也不會改變任何決定。留「08/25 06:47」。 */
+  DGPA_UPD = m ? m[1].trim().replace(/^\d{4}[\/-]/, '').replace(/:\d{2}$/, '') : '';
   if (!t) return [];
   const out = [];
   for (const tr of t.querySelectorAll('tr')) {
@@ -2677,11 +2685,23 @@ function dgpaOfficialCard() {
             on ? ';background:var(--acc-d);margin:0 -0.5rem;padding-left:0.5rem;padding-right:0.5rem' : ''}">
             <div><b style="color:${col}">${esc(r.county)}</b>${
               (!r.full && r.part) ? '<em style="font-style:normal;font-size:0.6875rem;color:var(--sb);margin-left:0.375rem">部分地區</em>' : ''}${
-              on ? '<em style="font-style:normal;font-size:0.6875rem;color:var(--acc);margin-left:0.375rem">我的</em>' : ''}</div>
-            <div style="font-size:0.8125rem;line-height:1.7">${r.lines.map(l =>
-              `<div style="color:${l.stop ? (l.scope === 'all' ? 'var(--no)' : 'var(--sb)') : 'var(--fg3)'}">${
-                esc(l.txt)}</div>`).join('')
-              || '<div style="color:var(--fg4)">未發布（照常上班上課）</div>'}</div>
+              on ? '<em style="font-style:normal;font-size:0.6875rem;color:var(--acc);margin-left:0.375rem">轄區</em>' : ''}</div>
+            ${(() => {
+              /* 縣市層級的敘述直接列;「六龜區:…」這種細部地點折起來 ——
+                 屏東縣一次十二行,四五個縣市就把整頁推到看不到底。
+                 折疊的標題會寫出有幾個地點,不必展開也知道規模。 */
+              const wide = r.lines.filter(l => l.scope === 'all');
+              const part = r.lines.filter(l => l.scope === 'part');
+              const line = l => `<div style="color:${
+                l.stop ? (l.scope === 'all' ? 'var(--no)' : 'var(--sb)') : 'var(--fg3)'}">${esc(l.txt)}</div>`;
+              const body = wide.map(line).join('')
+                || (part.length ? '' : '<div style="color:var(--fg4)">未發布（照常上班上課）</div>');
+              const fold = part.length ? `<details${on || r.full ? '' : ''}>
+                <summary style="cursor:pointer;color:var(--sb);padding:0.125rem 0">
+                  ${part.length} 個地區停止上班上課（展開）</summary>
+                <div style="padding-left:0.25rem">${part.map(line).join('')}</div></details>` : '';
+              return `<div style="font-size:0.8125rem;line-height:1.7">${body}${fold}</div>`;
+            })()}
           </div>`;
         };
         const top = rows.filter(r => mine.includes(cnorm(r.county)) || r.alert);
@@ -2758,13 +2778,19 @@ function officialLine(x) {
       <b style="color:var(--ok);margin-left:0.375rem">${esc(d.county)}　照常上班上課</b></div>`;
   }
   const col = d.full ? 'var(--no)' : 'var(--sb)';
+  const wide = stops.filter(l => l.scope === 'all');
+  const part = stops.filter(l => l.scope !== 'all');
   return `<div style="margin-top:0.3125rem;padding:0.375rem 0.5rem;border-radius:var(--r3);
       background:${d.full ? 'var(--no-d)' : 'var(--sb-d)'}">
     <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">官方公告</span>
     <b style="color:${col};margin-left:0.375rem">${esc(d.county)}　${
       d.full ? '停止上班上課' : '部分地區停止上班上課'}</b>
-    <div style="font-size:0.75rem;line-height:1.65;color:var(--fg2);margin-top:0.125rem">${
-      stops.map(l => `<div>${esc(l.txt)}</div>`).join('')}</div>${
+    <div style="font-size:0.75rem;line-height:1.65;color:var(--fg2);margin-top:0.125rem">
+      ${wide.map(l => `<div>${esc(l.txt)}</div>`).join('')}
+      ${part.length ? `<details><summary style="cursor:pointer;color:${col};padding:0.125rem 0">
+        ${part.length} 個地區停止上班上課（展開）</summary>
+        <div style="padding-left:0.25rem">${part.map(l => `<div>${esc(l.txt)}</div>`).join('')}</div>
+      </details>` : ''}</div>${
     d.full ? '' : `<div style="font-size:0.6875rem;color:var(--fg4);margin-top:0.125rem">
       請自行確認本站臺是否落在上列範圍內。</div>`}</div>`;
 }
@@ -2780,22 +2806,37 @@ function suspendCard() {
   const hit = rows.filter(v => v.r.any);
   const head = `<div class="sec"><h2>停班停課推估</h2>
     <button class="act" onclick="openPlace(null)">＋ 關注地點</button></div>`;
-  const foot = `<div class="msg w" style="margin:0.625rem 0 0">這是<b>本機推估，不是公告</b>。
+  const foot = `<details class="msg w" style="margin:0.625rem 0 0">
+    <summary style="cursor:pointer;font-weight:700">這是本機推估，不是公告　·　點開看依據與但書</summary>
+    <div style="margin-top:0.375rem">
     《天然災害停止上班及上課作業辦法》兩款：<b>風力</b>——平均風 ${SUSP_BF_MEAN} 級以上或陣風 ${SUSP_BF_GUST} 級以上
     （本程式由預報路徑逐時推算，陣風以持續風 ${GUST_FACTOR} 倍估算）；
     <b>雨量</b>——24 小時累積雨量<b>預測</b>達平地 ${DGPA_FLAT}、山區 ${DGPA_HILL} 毫米
     （本程式改看氣象署的豪大雨特報等級，特報本身即預測性質、門檻同一口徑，但它是分級不是逐點預測值）。
     <b>達到基準不等於一定放假</b>——還要已致災或有致災之虞，且由地方政府綜合研判宣布。請以
-    <a href="https://www.dgpa.gov.tw/typh/daily/nds.html" target="_blank" rel="noopener">人事行政總處公告</a>為準。</div>`;
+    <a href="https://www.dgpa.gov.tw/typh/daily/nds.html" target="_blank" rel="noopener">人事行政總處公告</a>為準。</div></details>`;
 
   /* 官方已經公告的地點,就算推估沒達標也要列出來 ——
      推估說「沒事」而官方說「停班停課」時,該相信的是官方。 */
   const official = rows.filter(v => !hit.includes(v) && (() => { const d = dgpaFor(v.x); return d && d.alert; })());
   if (!hit.length && !official.length) {
+    /* 空狀態要講得具體。一整段但書、沒有一個地名,看的人不知道
+       「到底有沒有查到我的縣市」—— 所以把轄區縣市與它們的官方狀態列出來。 */
+    const cs = myCounties();
+    const list = cs.length ? cs.map(c => {
+      const d = DGPA_LIVE && DGPA_LIVE.find(r => cnorm(r.county) === cnorm(c));
+      const st = !DGPA_LIVE ? '<span style="color:var(--fg4)">尚未取得公告</span>'
+        : !d ? '<span style="color:var(--fg4)">公告中未列</span>'
+        : d.full ? '<b style="color:var(--no)">停止上班上課</b>'
+        : d.part ? '<b style="color:var(--sb)">部分地區停止上班上課</b>'
+        : '<b style="color:var(--ok)">照常上班上課</b>';
+      return `<div style="padding:0.1875rem 0"><b>${esc(c)}</b>　${st}</div>`;
+    }).join('') : '<div style="color:var(--fg4)">站臺與關注地點都還對應不到縣市（需要鄰近雨量站或氣象站的資料）。</div>';
     return head + `<div class="card pad" style="margin-bottom:0.75rem">
-      <div class="msg i" style="margin:0">${targets.length} 個地點都沒有推估達到停班停課的基準
-      （風力：平均風 ${SUSP_BF_MEAN} 級或陣風 ${SUSP_BF_GUST} 級；雨量：所在縣市未發布豪雨以上特報），
-      所在縣市也沒有官方公告停班停課。<b>推估沒達標不代表不會放假</b>——以下方「各縣市停班停課」的官方公告為準。</div>
+      <div style="font-size:0.8125rem;line-height:1.7">${list}</div>
+      <div class="msg i" style="margin:0.5rem 0 0">${targets.length} 個地點都沒有推估達到停班停課的基準
+      （風力：平均風 ${SUSP_BF_MEAN} 級或陣風 ${SUSP_BF_GUST} 級；雨量：所在縣市未發布豪雨以上特報）。
+      <b>推估沒達標不代表不會放假</b>——上列的官方狀態才是準的。</div>
       ${foot}</div>`;
   }
   const body = hit.concat(official).map(({ x, r }) => {
@@ -3023,8 +3064,16 @@ function briefText() {
         // 官方講的話排在最前面 —— 推估說沒事而官方說停班停課時,該相信的是官方
         const d = dgpaFor(x);
         if (d && d.alert) {
+          /* 播報稿是要唸、要貼進通報的,十二個鄉全部串成一句話沒有人唸得完。
+             列前三個,其餘用數量帶過 —— 完整清單在上面那張卡裡。 */
+          const st2 = d.lines.filter(l => l.stop);
+          const wide2 = st2.filter(l => l.scope === 'all').map(l => l.txt.replace(/。\s*$/, ''));
+          const part2 = st2.filter(l => l.scope !== 'all').map(l => l.txt.replace(/[:：].*$/, ''));
+          const detail = wide2.concat(part2.length
+            ? [part2.slice(0, 3).join('、') + (part2.length > 3 ? `等 ${part2.length} 個地區` : '')]
+            : []).join('；');
           seg.push(`官方公告 ${d.county}${d.full ? '停止上班上課' : '部分地區停止上班上課'}`
-            + `（${d.lines.filter(l => l.stop).map(l => l.txt.replace(/。\s*$/, '')).join('；')}）`);
+            + (detail ? `（${detail}）` : ''));
         } else if (d) {
           seg.push(`官方公告 ${d.county}照常上班上課`);
         }
@@ -3229,16 +3278,31 @@ function warningCard() {
     return { sub: '暴風範圍已脫離', val: '<span style="color:var(--fg4)">預估可解除</span>' };
   };
   const s = state(WARN.sea), l = state(WARN.land);
-  let html = `<div class="sec"><h2>警報時機預判${EXTRAP ? '（由外推路徑推算）' : ''}</h2></div>`
-    + exNote + '<div class="card" style="margin-bottom:0.75rem">';
-  html += row('🌊', '#54C7EA', '海上颱風警報', s.sub, s.val);
-  html += row('🏝', '#EFAA35', '陸上颱風警報', l.sub, l.val);
-  html += row('🎯', '#EF5B4C', '中心最接近', WARN.cpa ? `距臺灣最近約 ${Math.round(WARN.cpa.d)} 公里` : '—',
-    WARN.cpa ? two(WARN.cpa.t) : '—');
-  html += row('✅', '#3ECB92', '預估解除警報', WARN.sea ? '暴風範圍完全脫離近海之後' : '—',
-    WARN.sea ? two(WARN.sea.clear) : '—');
-  html += '</div>';
-  html += `<p class="hint" style="margin-bottom:0.875rem">依氣象署慣例推算（海警：暴風範圍及岸外 ${DB.cfg.seaBuffer} km 前 24 小時；陸警：及陸前 18 小時）。實際發布時間由氣象署決定，此處供先期排程參考。</p>`;
+  /* 沒有資料的列就不要擺出來。四列裡三列寫著「預估不發布」「—」,
+     等於用整張卡講一句「不會有事」—— 那一句話寫成一行就好。 */
+  const noWarn = !WARN.sea && !WARN.land;
+  const rows = [];
+  if (!noWarn) {
+    rows.push(row('🌊', '#54C7EA', '海上颱風警報', s.sub, s.val));
+    rows.push(row('🏝', '#EFAA35', '陸上颱風警報', l.sub, l.val));
+  }
+  if (WARN.cpa) {
+    rows.push(row('🎯', '#EF5B4C', '中心最接近',
+      `距臺灣最近約 ${Math.round(WARN.cpa.d)} 公里`, two(WARN.cpa.t)));
+  }
+  if (WARN.sea) {
+    rows.push(row('✅', '#3ECB92', '預估解除警報', '暴風範圍完全脫離近海之後', two(WARN.sea.clear)));
+  }
+  if (!rows.length) return '';
+  let html = `<div class="sec"><h2>警報時機預判${EXTRAP ? '（由外推路徑推算）' : ''}</h2></div>` + exNote;
+  if (noWarn) {
+    html += `<div class="msg i" style="margin-bottom:0.5rem">暴風範圍預估不會觸及臺灣近海，
+      <b>推估不會發布海上或陸上颱風警報</b>。</div>`;
+  }
+  html += '<div class="card" style="margin-bottom:0.75rem">' + rows.join('') + '</div>';
+  if (!noWarn) {
+    html += `<p class="hint" style="margin-bottom:0.875rem">依氣象署慣例推算（海警：暴風範圍及岸外 ${DB.cfg.seaBuffer} km 前 24 小時；陸警：及陸前 18 小時）。實際發布時間由氣象署決定，此處供先期排程參考。</p>`;
+  }
   return html;
 }
 
