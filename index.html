@@ -1037,7 +1037,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v23';
+const APP_VER = 'v24';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2575,21 +2575,30 @@ function parseDgpaHtml(html) {
     if (tds.length < 2) continue;                       // 備註列
     const county = tds[0].textContent.trim().replace(/\s+/g, '');
     if (!county || !/[縣市]$/.test(county)) continue;    // 表頭與雜項
+    /* 每一行分兩件事看:停不停,以及**停的是整個縣市還是某幾個區／鄉／里**。
+       官方那張表在高雄市、屏東縣這種情況下,整格裡一條全縣的敘述都沒有,
+       只有「六龜區:今天停止上班、停止上課。」這種逐區的。
+       如果把整個縣市塗紅,等於說高雄市全市放假 —— 那天並沒有。
+       判斷方式:行首有「○○區:」「○○鄉:」「○○里:」這種前綴的就是局部。 */
+    const PART_RE = /^[^:：]{1,18}(區|鄉|鎮|市|里|村|部落|分校|國民小學|國小|國中|高中)[^:：]{0,12}[:：]/;
     const lines = [];
-    let alert = false;
+    let full = false, part = false;
+    const add = (txt, stop) => {
+      const scope = PART_RE.test(txt) ? 'part' : 'all';
+      if (stop) { if (scope === 'all') full = true; else part = true; }
+      lines.push({ txt, stop, scope });
+    };
     for (const f of tds[1].querySelectorAll('font, span')) {
       const txt = f.textContent.trim().replace(/\s+/g, ' ');
       if (!txt) continue;
       const col = (f.getAttribute('color') || '').toUpperCase();
-      const stop = /停止上班|停止上課/.test(txt) || col === '#FF0000' || col === 'FF0000';
-      if (stop) alert = true;
-      lines.push({ txt, stop });
+      add(txt, /停止上班|停止上課/.test(txt) || col === '#FF0000' || col === 'FF0000');
     }
     if (!lines.length) {
       const txt = tds[1].textContent.trim().replace(/\s+/g, ' ');
-      if (txt) { const stop = /停止上班|停止上課/.test(txt); if (stop) alert = true; lines.push({ txt, stop }); }
+      if (txt) add(txt, /停止上班|停止上課/.test(txt));
     }
-    out.push({ county, lines, alert });
+    out.push({ county, lines, full, part, alert: full || part });
   }
   return out;
 }
@@ -2606,7 +2615,8 @@ function parseDgpaJson(j) {
     const txt = [pick(r, 'work', 'Work', 'status', '上班'), pick(r, 'school', 'School', '上課'),
       pick(r, 'note', 'Note', '備註')].filter(Boolean).map(String).join('、');
     const stop = /停止上班|停止上課|停班|停課/.test(txt);
-    return { county: String(county), lines: txt ? [{ txt, stop }] : [], alert: stop };
+    return { county: String(county), lines: txt ? [{ txt, stop, scope: 'all' }] : [],
+      full: stop, part: false, alert: stop };
   }).filter(Boolean);
 }
 
@@ -2646,8 +2656,9 @@ function dgpaOfficialCard() {
   if (live && live.length) {
     // 自己的縣市排最前面,其次是有停班停課的,其餘照原順序
     const rows = live.map((r, i) => ({ r, i }))
+      // 我的縣市 → 全縣停 → 部分地區停 → 其餘
       .sort((a, b) => (mine.includes(cnorm(b.r.county)) - mine.includes(cnorm(a.r.county)))
-        || (b.r.alert - a.r.alert) || (a.i - b.i))
+        || (b.r.full - a.r.full) || (b.r.part - a.r.part) || (a.i - b.i))
       .map(x => x.r);
     liveHtml = `${DGPA_HEAD ? `<div style="font-weight:700;margin-bottom:0.25rem">${esc(DGPA_HEAD)}</div>` : ''}
       <div class="hint" style="margin:0 0 0.5rem">
@@ -2656,14 +2667,20 @@ function dgpaOfficialCard() {
         /* 二十二個縣市全攤開,概況頁會被推長一大截,而且要找自己的那一個
            還得用眼睛掃。所以只把「我的」與「有停班停課的」直接列出來,
            其餘收在一個可以展開的區塊裡 —— 資料一筆都沒有少。 */
+        /* 縣市名的顏色講的是**這個縣市整體**停不停:
+           全縣停＝紅;只有幾個區鄉停＝琥珀並標「部分地區」——
+           把高雄市塗成紅色等於說全市放假,那天並沒有。 */
         const row = r => {
           const on = mine.includes(cnorm(r.county));
+          const col = r.full ? 'var(--no)' : r.part ? 'var(--sb)' : 'var(--fg2)';
           return `<div style="padding:0.4375rem 0;border-top:1px solid var(--edge)${
             on ? ';background:var(--acc-d);margin:0 -0.5rem;padding-left:0.5rem;padding-right:0.5rem' : ''}">
-            <div><b style="color:${r.alert ? 'var(--no)' : 'var(--fg2)'}">${esc(r.county)}</b>${
+            <div><b style="color:${col}">${esc(r.county)}</b>${
+              (!r.full && r.part) ? '<em style="font-style:normal;font-size:0.6875rem;color:var(--sb);margin-left:0.375rem">部分地區</em>' : ''}${
               on ? '<em style="font-style:normal;font-size:0.6875rem;color:var(--acc);margin-left:0.375rem">我的</em>' : ''}</div>
             <div style="font-size:0.8125rem;line-height:1.7">${r.lines.map(l =>
-              `<div style="color:${l.stop ? 'var(--no)' : 'var(--fg3)'}">${esc(l.txt)}</div>`).join('')
+              `<div style="color:${l.stop ? (l.scope === 'all' ? 'var(--no)' : 'var(--sb)') : 'var(--fg3)'}">${
+                esc(l.txt)}</div>`).join('')
               || '<div style="color:var(--fg4)">未發布（照常上班上課）</div>'}</div>
           </div>`;
         };
@@ -2713,12 +2730,45 @@ function dgpaOfficialCard() {
     </div>`;
 }
 
+/* 查某個地點所在縣市的**官方公告**。官方講的話永遠壓過我的推估 ——
+   推估是拿模型算的,公告是已經發生的事實。 */
+function dgpaFor(x) {
+  if (!DGPA_LIVE || !DGPA_LIVE.length) return null;
+  const c = cnorm(countyOf(x));
+  if (!c) return null;
+  return DGPA_LIVE.find(r => cnorm(r.county) === c) || null;
+}
+
 /* ── 停班停課推估卡 ─────────────────────────────────────
    使用者要的是「哪一天、幾點可能不用上班上課」。
    能算的只有風力那一款（平均風 7 級／陣風 10 級）—— 雨量款要的是
    「未來 24 小時累積雨量預測」,本程式沒有預測雨量。
    所以卡片上只講「推估達風力基準」,而且每一次都把三件事寫出來:
    ① 這是推估不是公告 ② 還要「已致災或有致災之虞」 ③ 宣布權在地方政府。 */
+/* 一個地點的官方公告摘要。全縣停＝紅;只有幾個區鄉停＝琥珀,
+   而且**要把那幾個區鄉列出來** —— 只說「部分地區」等於沒說,
+   值班的人要自己判斷站臺在不在那幾個裡面。 */
+function officialLine(x) {
+  const d = dgpaFor(x);
+  if (!d) return '';
+  const stops = d.lines.filter(l => l.stop);
+  if (!stops.length) {
+    return `<div style="margin-top:0.3125rem">
+      <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">官方公告</span>
+      <b style="color:var(--ok);margin-left:0.375rem">${esc(d.county)}　照常上班上課</b></div>`;
+  }
+  const col = d.full ? 'var(--no)' : 'var(--sb)';
+  return `<div style="margin-top:0.3125rem;padding:0.375rem 0.5rem;border-radius:var(--r3);
+      background:${d.full ? 'var(--no-d)' : 'var(--sb-d)'}">
+    <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">官方公告</span>
+    <b style="color:${col};margin-left:0.375rem">${esc(d.county)}　${
+      d.full ? '停止上班上課' : '部分地區停止上班上課'}</b>
+    <div style="font-size:0.75rem;line-height:1.65;color:var(--fg2);margin-top:0.125rem">${
+      stops.map(l => `<div>${esc(l.txt)}</div>`).join('')}</div>${
+    d.full ? '' : `<div style="font-size:0.6875rem;color:var(--fg4);margin-top:0.125rem">
+      請自行確認本站臺是否落在上列範圍內。</div>`}</div>`;
+}
+
 function suspendCard() {
   const targets = [
     ...DB.places.map(x => ({ ...x, kind: 'place' })),
@@ -2738,14 +2788,18 @@ function suspendCard() {
     <b>達到基準不等於一定放假</b>——還要已致災或有致災之虞，且由地方政府綜合研判宣布。請以
     <a href="https://www.dgpa.gov.tw/typh/daily/nds.html" target="_blank" rel="noopener">人事行政總處公告</a>為準。</div>`;
 
-  if (!hit.length) {
+  /* 官方已經公告的地點,就算推估沒達標也要列出來 ——
+     推估說「沒事」而官方說「停班停課」時,該相信的是官方。 */
+  const official = rows.filter(v => !hit.includes(v) && (() => { const d = dgpaFor(v.x); return d && d.alert; })());
+  if (!hit.length && !official.length) {
     return head + `<div class="card pad" style="margin-bottom:0.75rem">
       <div class="msg i" style="margin:0">${targets.length} 個地點都沒有推估達到停班停課的基準
-      （風力：平均風 ${SUSP_BF_MEAN} 級或陣風 ${SUSP_BF_GUST} 級；雨量：所在縣市未發布豪雨以上特報）。</div>
+      （風力：平均風 ${SUSP_BF_MEAN} 級或陣風 ${SUSP_BF_GUST} 級；雨量：所在縣市未發布豪雨以上特報），
+      所在縣市也沒有官方公告停班停課。<b>推估沒達標不代表不會放假</b>——以下方「各縣市停班停課」的官方公告為準。</div>
       ${foot}</div>`;
   }
-  const body = hit.map(({ x, r }) => {
-    const parts = [];
+  const body = hit.concat(official).map(({ x, r }) => {
+    const parts = [officialLine(x)].filter(Boolean);
     if (r.days.length) {
       parts.push(`<div style="margin-top:0.3125rem">
         <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">風力款</span>
@@ -2959,12 +3013,21 @@ function briefText() {
       ...DB.places.map(x => ({ ...x, kind: 'place' })),
       ...withXY.map(x => ({ ...x, kind: 'st' })),
     ];
-    const hits = tg.map(x => ({ x, r: suspendFor(x) })).filter(v => v.r && v.r.any);
+    const hits = tg.map(x => ({ x, r: suspendFor(x) }))
+      .filter(v => v.r && (v.r.any || (() => { const d = dgpaFor(v.x); return d && d.alert; })()));
     if (hits.length) {
       L.push('');
-      L.push('停班停課推估（本機推估，非公告）');
+      L.push('停班停課（官方公告優先，其餘為本機推估）');
       for (const { x, r } of hits) {
         const seg = [];
+        // 官方講的話排在最前面 —— 推估說沒事而官方說停班停課時,該相信的是官方
+        const d = dgpaFor(x);
+        if (d && d.alert) {
+          seg.push(`官方公告 ${d.county}${d.full ? '停止上班上課' : '部分地區停止上班上課'}`
+            + `（${d.lines.filter(l => l.stop).map(l => l.txt.replace(/。\s*$/, '')).join('；')}）`);
+        } else if (d) {
+          seg.push(`官方公告 ${d.county}照常上班上課`);
+        }
         if (r.days.length) {
           seg.push(`風力款 ${r.days.map(d => `${dayPhrase(d)} ${fmtClock(d.from)}–${fmtClock(d.to)}`).join('、')}`
             + `（尖峰 ${Math.max(...r.days.map(d => d.peakBf))} 級）`);
