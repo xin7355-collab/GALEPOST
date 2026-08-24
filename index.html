@@ -312,6 +312,17 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .warnrow .wv{font-family:var(--mono);font-size:0.8438rem;text-align:right;flex-shrink:0;font-weight:600}
 #map{height:18.75rem;border-radius:var(--r);border:1px solid var(--edge);margin-bottom:0.75rem;
   background:var(--bg2)}
+/* 全螢幕地圖。站臺擠在西海岸,18.75rem 高的框裡看不出誰是誰。
+   用 fixed 蓋住整個視窗,離開時要記得叫 Leaflet 重新量尺寸。 */
+#mapWrap{position:relative}
+#mapWrap.full{position:fixed;inset:0;z-index:1200;background:var(--bg);
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#mapWrap.full #map{height:100%;margin:0;border-radius:0;border:0}
+#mapFull{position:absolute;right:0.625rem;bottom:1.375rem;z-index:1000;
+  width:2.25rem;height:2.25rem;border-radius:var(--r3);display:flex;align-items:center;
+  justify-content:center;background:rgba(12,20,26,.92);border:1px solid var(--edge2);
+  color:var(--fg2);font-size:1.125rem;line-height:1;cursor:pointer}
+#mapWrap.full #mapFull{bottom:calc(0.625rem + env(safe-area-inset-bottom))}
 .leaflet-container{background:#0A1720}
 /* 圖層切換與來源標示:Leaflet 預設是白底,擺在暗色介面上會像破洞,改成同一套色。 */
 .leaflet-control-layers,.leaflet-control-zoom a{background:rgba(12,20,26,.92)!important;
@@ -490,7 +501,10 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
       <button type="button" data-mf="all" aria-pressed="true">全域</button>
       <button type="button" data-mf="tw" aria-pressed="false">對焦站臺</button>
     </div>
-    <div id="map" style="display:none"></div>
+    <div id="mapWrap" style="display:none">
+      <div id="map"></div>
+      <button type="button" id="mapFull" aria-label="全螢幕地圖" title="全螢幕">⛶</button>
+    </div>
     <div id="tyTl"></div>
     <div id="tyFc"></div>
   </div>
@@ -626,7 +640,7 @@ function blankDB() {
       introA: '本單位雷達暨紅外線因{颱風}颱風，實施關（待）機情形如下：',
       endA: '本單位賡續管制復機情形。',
       endB: '持續掌握復勤及復機狀況。',
-      cwaKey: '', auto: false,
+      cwaKey: '', auto: false, dgpaUrl: '',
       bfShut: 8, bfEmerg: 10, bfResume: 6, humMax: 70, leadMin: 60,
       sort: 'ns', listSort: 'ns', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
     },
@@ -977,7 +991,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v20';
+const APP_VER = 'v21';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1375,17 +1389,70 @@ const RAIN_LEVELS = [
   { name: '大雨',     h24: 80,  h1: 40,  col: '#EFC935' },
 ];
 
-/* 停班停課的雨量參考基準（天然災害停止上班及上課作業辦法）:
-   未來 24 小時累積雨量**預測**達山區 200 mm、平地 350 mm
-   （部分縣市不分山區平地皆 350 mm 或自訂 200 mm）,
-   **且已致災或有致災之虞**時,由地方政府綜合研判宣布。
+/* ── 停班停課雨量基準：《天然災害停止上班及上課作業辦法》第四條附表 ──
+   「各通報權責機關停止上班上課雨量參考基準一覽表」,單位為
+   **未來 24 小時累積雨量預測／毫米**。各縣市不一樣,不是一律 350/200:
 
-   兩件事必須講清楚,否則這個數字會被當成「要放假了」:
-   ① 官方基準看的是「預測」,這裡拿得到的是雨量站的「實測累積」——
-      不是同一回事,實測達標只代表「已經下到那個量」。
-   ② 達標不等於一定停班停課 —— 決定權在地方政府,還要看有沒有致災。
-   所以標的是「已達參考基準」,不是「將停班停課」。            */
-const DGPA_HILL = 200, DGPA_FLAT = 350;
+   - 多數縣市不分山區平地,一律 350
+   - 桃園、新竹縣、苗栗、臺中、南投、雲林、嘉義縣、高雄、臺東：山區 200 / 平地 350
+   - 連江縣：200（不分山區平地）
+   - 三個縣另訂「實際觀測」值 —— 附表備註二寫明它同樣「作為決定及通報依據」：
+     南投縣平地 300、宜蘭縣 250、連江縣 180。
+
+   兩個門檻是兩件事,不能混：
+   **預測** 值要拿氣象署的預報去比（本程式改看豪大雨特報的分級,口徑相同）；
+   **實際觀測** 值要拿雨量站實測的 24 小時累積去比 —— 只有上面那三個縣有,
+   其餘縣市拿實測去比 350 只是參考,不是官方基準。                        */
+const DGPA_HILL = 200, DGPA_FLAT = 350;          // 附表未列的縣市用這組
+/* flat/hill：預測基準；obs：實際觀測基準（沒有就是沒有訂）；
+   obsZone：實際觀測基準適用的地形（'all' 或 'flat'）。 */
+const DGPA_COUNTY = {
+  基隆市: { flat: 350, hill: 350 },
+  臺北市: { flat: 350, hill: 350 },
+  新北市: { flat: 350, hill: 350 },
+  桃園市: { flat: 350, hill: 200 },
+  新竹市: { flat: 350, hill: 350 },
+  新竹縣: { flat: 350, hill: 200 },
+  苗栗縣: { flat: 350, hill: 200 },
+  臺中市: { flat: 350, hill: 200 },
+  彰化縣: { flat: 350, hill: 350 },
+  南投縣: { flat: 350, hill: 200, obs: 300, obsZone: 'flat' },
+  雲林縣: { flat: 350, hill: 200 },
+  嘉義市: { flat: 350, hill: 350 },
+  嘉義縣: { flat: 350, hill: 200 },
+  臺南市: { flat: 350, hill: 350 },
+  高雄市: { flat: 350, hill: 200 },
+  屏東縣: { flat: 350, hill: 350 },
+  宜蘭縣: { flat: 350, hill: 350, obs: 250, obsZone: 'all' },
+  花蓮縣: { flat: 350, hill: 350 },
+  臺東縣: { flat: 350, hill: 200 },
+  澎湖縣: { flat: 350, hill: 350 },
+  金門縣: { flat: 350, hill: 350 },
+  連江縣: { flat: 200, hill: 200, obs: 180, obsZone: 'all' },
+};
+// 臺／台混用是常態,查表前先正規化
+const cnorm = v => String(v || '').replace(/[臺台]/g, '台');
+const DGPA_BY_NORM = (() => {
+  const m = {};
+  for (const [k, v] of Object.entries(DGPA_COUNTY)) m[cnorm(k)] = Object.assign({ name: k }, v);
+  return m;
+})();
+function dgpaRule(county, terrain) {
+  const r = DGPA_BY_NORM[cnorm(county)];
+  const hill = terrain === 'hill';
+  if (!r) {
+    return { county: county || '', known: false, label: hill ? '山區' : '平地',
+      fc: hill ? DGPA_HILL : DGPA_FLAT, obs: null };
+  }
+  return {
+    county: r.name, known: true, label: hill ? '山區' : '平地',
+    fc: hill ? r.hill : r.flat,
+    // 實際觀測基準只在它適用的地形上成立
+    obs: (r.obs != null && (r.obsZone === 'all' || (r.obsZone === 'flat' && !hill))) ? r.obs : null,
+    uniform: r.hill === r.flat,
+  };
+}
+
 const TERRAIN = {
   flat: { label: '平地', thr: DGPA_FLAT, col: '#B0186B' },
   hill: { label: '山區', thr: DGPA_HILL, col: '#EF5B4C' },
@@ -1401,11 +1468,24 @@ function terrainOf(st) {
   const t = st && DB.types.find(x => x.id === st.type);
   return t && t.terrain === 'hill' ? 'hill' : 'flat';
 }
+
+/* 拿「實測」的 24 小時累積去比停班停課基準。
+   附表裡只有南投（平地 300）、宜蘭（250）、連江（180）訂了實際觀測基準,
+   那三個縣的實測達標是**官方依據**;其餘縣市附表只給預測值,
+   拿實測去比 350／200 充其量是參考,所以回傳裡把兩者分開標。 */
 function dgpaMark(h24, st) {
   if (h24 == null) return null;
   const k = terrainOf(st), T = TERRAIN[k];
-  return h24 >= T.thr ? { t: `已達${T.label}基準`, terrain: k, label: T.label, thr: T.thr, col: T.col } : null;
+  const rule = dgpaRule(countyOf(st), k);
+  // 有訂實際觀測基準就用它（那是官方的）,沒有就退回預測值當參考
+  const thr = rule.obs != null ? rule.obs : (rule.fc != null ? rule.fc : T.thr);
+  if (h24 < thr) return null;
+  return {
+    t: `已達${T.label}基準`, terrain: k, label: T.label, thr,
+    official: rule.obs != null, county: rule.county, col: T.col,
+  };
 }
+
 /* 這個類別的站臺要不要進回報稿。中繼站臺是自用監看,不進交接通報。 */
 const inReport = st => {
   const t = st && DB.types.find(x => x.id === st.type);
@@ -1462,7 +1542,7 @@ async function fetchRain(key) {
 const OBS_MAX_KM = 60;
 
 function nearestIn(list, st) {
-  if (!list.length || !Number.isFinite(st.lat) || !Number.isFinite(st.lng)) return null;
+  if (!list.length || !st || !Number.isFinite(st.lat) || !Number.isFinite(st.lng)) return null;
   const p = { lat: st.lat, lng: st.lng };
   let best = null;
   for (const o of list) {
@@ -1747,12 +1827,12 @@ function advH24(kind) {
   for (const k of Object.keys(ADV_H24)) if (String(kind).includes(k)) return ADV_H24[k];
   return 0;
 }
-// 臺／台混用是常態,比對前先統一
-const cnorm = v => String(v || '').replace(/[臺台]/g, '台');
 /* 站臺沒有縣市欄位,拿最近的雨量站（沒有就拿最近的氣象站）的縣市當作它所在的縣市。
    兩者都在 60 km 以內才會被採用,同縣市的機會很高;真的對不上就回 null,
    寧可不判斷也不要判斷錯 —— 說錯縣市就是說錯放假。 */
 function countyOf(st) {
+  if (!st) return '';
+  if (st.county) return st.county;            // 使用者自己填的優先
   const r = nearestRain(st); if (r && r.o.county) return r.o.county;
   const o = nearestObs(st);  if (o && o.o.county) return o.o.county;
   return '';
@@ -1775,8 +1855,11 @@ function advRainFor(st) {
     }
   }
   if (!best) return null;
-  best.thr = TERRAIN[terrainOf(st)].thr;
-  best.label = TERRAIN[terrainOf(st)].label;
+  // 門檻依附表逐縣市查,不是一律 350／200 —— 連江縣是 200,山區縣市山區也是 200
+  const rule = dgpaRule(countyOf(st), terrainOf(st));
+  best.thr = rule.fc;
+  best.label = rule.label;
+  best.knownCounty = rule.known;
   best.meets = best.mm >= best.thr;
   return best;
 }
@@ -1908,6 +1991,8 @@ async function loadTyphoon(manual) {
   }
   _busy = true; _last = now;
   renderTyphoon({ loading: true });
+  // 公告來源跟颱風資料一起更新。沒設定就是 no-op,不會多送任何請求。
+  fetchDgpa(false);
   const key = (DB.cfg.cwaKey || '').trim();
   let note = '';
   // 實測觀測跟颱風路徑是兩件事:就算氣象署現在沒有任何颱風,
@@ -2095,8 +2180,12 @@ function renderStations() {
   $('#navDot').hidden = !down;
   $('#navDot').textContent = down;
 
+  /* 未建置的點不進站臺管制清單 —— 管制盤是「現在有幾臺、狀態如何」,
+     還沒架上去的東西擺在裡面只會佔位置。要看它得按「未建置」篩選,
+     或到設定的站臺清單去（那裡是完整的）。 */
   const list = sortStations(DB.stations.filter(s =>
-    (fType === 'all' || s.type === fType) && (fStatus === 'all' || s.status === fStatus)), imp);
+    (fType === 'all' || s.type === fType)
+    && (fStatus === 'all' ? s.status !== 'plan' : s.status === fStatus)), imp);
 
   const fleet = DB.stations.filter(s => IS_LIVE(s) && inReport(s))
     .map(s => `<i style="background:${S_COL[s.status]}"></i>`).join('');
@@ -2117,7 +2206,7 @@ function renderStations() {
   </div>
   ${(n.plan || n.extra) ? `<div class="hint" style="margin:-0.375rem 0 0.75rem">
     另有${n.extra ? ` <b>${n.extra}</b> 處不列入回報（自用監看）` : ''}${
-      n.plan ? `${n.extra ? '、' : ' '}<b>${n.plan}</b> 處未建置` : ''}，未計入上方戰力。</div>` : ''}
+      n.plan ? `${n.extra ? '、' : ' '}<b>${n.plan}</b> 處未建置（不在下方管制清單，按「未建置」可檢視）` : ''}，未計入上方戰力。</div>` : ''}
   <div class="fleet">${fleet}</div>
   <div class="fleet-lb"><span>戰力 ${n.on} / ${DB.stations.length}</span>
     <span>${maxBf >= 0 ? '現場最高推估 ' + bfLabel(maxBf)
@@ -2161,7 +2250,8 @@ function stationCard(s, imp, i, total) {
     const nb = 'white-space:nowrap';
     meta.push(`<span style="${nb}">24 小時雨量 ${Math.round(rb.o.h24)} mm</span>`
       + (L ? `　<b style="color:${L.col};${nb}">${L.name}</b>` : '')
-      + (dm ? `　<b style="color:${dm.col};${nb}">停班課${dm.t}</b>` : ''));
+      + (dm ? `　<b style="color:${dm.col};${nb}">停班課${dm.t} ${dm.thr}`
+          + `${dm.official ? '（實際觀測）' : ''}</b>` : ''));
   }
   return `<article class="st" data-id="${s.id}">
     <div class="st-main">
@@ -2244,7 +2334,7 @@ function moveStation(id, d) {
 }
 
 /* ═══ 颱風頁 ═══════════════════════════════════════════ */
-let MAP = null, MLAYER = null;
+let MAP = null, MLAYER = null, MAPFIT = null;
 
 /* 上一次載入的說明文字。
    以前 note 是逐次傳進來的,切個頁籤重畫一次就沒了 —— 使用者只剩下
@@ -2266,7 +2356,7 @@ function renderTyphoon(o) {
     // 都只會顯示同一句「查無熱帶氣旋」。
     msg.innerHTML = (note ? `<div class="msg w">${esc(note)}</div>` : '')
       + '<div class="msg i">目前查無活動中的熱帶氣旋。</div>';
-    body.innerHTML = ''; $('#map').style.display = 'none';
+    body.innerHTML = ''; $('#mapWrap').style.display = 'none';
     clearTyPanes(); return;
   }
 
@@ -2279,7 +2369,7 @@ function renderTyphoon(o) {
       <div class="btnrow" style="max-width:20rem;margin:0 auto">
         <button class="btn pri" onclick="loadTyphoon(true)">立即查詢</button>
         <button class="btn" onclick="go('cfg')">前往設定</button></div></div>`;
-    $('#map').style.display = 'none'; clearTyPanes();
+    $('#mapWrap').style.display = 'none'; clearTyPanes();
     paintBfBar(null); return;
   }
 
@@ -2317,7 +2407,7 @@ function renderTyphoon(o) {
       <div class="ty-nm"><b>${esc(ty.name)}</b>
         <span>${ty.en && ty.en !== ty.name ? esc(ty.en) + '　' : ''}<i style="font-style:normal;font-weight:700;color:${bfColor(bfV)}">${TC_FULL[tcClass(ty.vmax)] || ''}</i>　近中心最大風 ${bfLabel(bfV)}</span></div></div>
     <div class="ty-gr">${g.map(([l, v]) => `<div><b>${esc(v)}</b><small>${l}</small></div>`).join('')}</div>
-  </div>` + warningCard() + suspendCard();
+  </div>` + warningCard() + suspendCard() + dgpaOfficialCard();
 
   drawMap(ty);
   renderImpact();
@@ -2332,6 +2422,122 @@ function renderTyphoon(o) {
    「未來 24 小時累積雨量預測」,本程式沒有預測雨量。
    所以卡片上只講「推估達風力基準」,而且每一次都把三件事寫出來:
    ① 這是推估不是公告 ② 還要「已致災或有致災之虞」 ③ 宣布權在地方政府。 */
+/* ── 各縣市停班停課「官方」資訊 ─────────────────────────────
+   使用者要的是官方公告本身,不是我的推估。這裡分兩件事處理:
+
+   ① **官方基準**：《天然災害停止上班及上課作業辦法》第四條附表已經內建
+      （DGPA_COUNTY）,那是法規附表,可以直接列給人看。
+   ② **官方即時公告**：行政院人事行政總處的「天然災害停止上班及上課情形」。
+      **我沒有驗證過任何可跨網域取用的官方資料端點** —— 這個開發環境連不到
+      dgpa.gov.tw,無從確認。憑猜測寫一個網址上去,就是重演抓 W-C0034-003
+      （平台上根本不存在的資料集）那個錯:畫面上會出現一個永遠失敗、
+      或更糟、成功但內容是別的東西的區塊。
+      所以做法是:預設只給官方頁面的連結,另外開一個設定欄位,
+      使用者拿到可用的 JSON 端點時自己填進來,程式才會去抓。         */
+const DGPA_URL = 'https://www.dgpa.gov.tw/typh/daily/nds.html';
+let DGPA_LIVE = null, DGPA_LIVE_AT = 0, DGPA_LIVE_ERR = '';
+
+/* 期待的 JSON 形狀（填了自訂端點才會用到）：
+   [{ county:'臺中市', work:'照常上班', school:'照常上課', note:'', time:'2026-08-24 20:00' }, …]
+   欄位名稱大小寫、中英文都接;認不出來的就整筆略過,不猜。 */
+function parseDgpa(j) {
+  const arr = Array.isArray(j) ? j
+    : (j && (j.records || j.data || j.result || j.list)) || [];
+  const rows = Array.isArray(arr) ? arr : (arr.records || arr.data || []);
+  if (!Array.isArray(rows)) return [];
+  return rows.map(r => {
+    if (!r || typeof r !== 'object') return null;
+    const county = pick(r, 'county', 'County', 'countyName', 'CountyName', 'name', 'area', '縣市');
+    if (!county) return null;
+    return {
+      county: String(county),
+      work: String(pick(r, 'work', 'Work', 'workStatus', '上班', 'status') || ''),
+      school: String(pick(r, 'school', 'School', 'schoolStatus', '上課') || ''),
+      note: String(pick(r, 'note', 'Note', 'remark', 'comment', '備註') || ''),
+      time: String(pick(r, 'time', 'Time', 'updateTime', 'publishTime', '時間') || ''),
+    };
+  }).filter(Boolean);
+}
+
+async function fetchDgpa(manual) {
+  const url = (DB.cfg.dgpaUrl || '').trim();
+  if (!url) { DGPA_LIVE = null; DGPA_LIVE_ERR = ''; return; }
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const rows = parseDgpa(await r.json());
+    if (!rows.length) throw new Error('回應中找不到可辨識的縣市資料');
+    DGPA_LIVE = rows; DGPA_LIVE_AT = Date.now(); DGPA_LIVE_ERR = '';
+  } catch (e) {
+    DGPA_LIVE = null; DGPA_LIVE_ERR = String(e && e.message || e);
+  }
+  if (manual) renderTyphoon({});
+}
+
+/* 我自己的站臺與關注地點落在哪些縣市 —— 只把那幾個縣市挑出來排在最前面,
+   二十二個縣市全列一次,要找自己的那一個還得用眼睛掃。 */
+function myCounties() {
+  const set = new Set();
+  for (const x of DB.places) { const c = countyOf(x); if (c) set.add(c); }
+  for (const x of DB.stations) { if (!IS_LIVE(x)) continue; const c = countyOf(x); if (c) set.add(c); }
+  return [...set];
+}
+
+function dgpaOfficialCard() {
+  const mine = myCounties();
+  const live = DGPA_LIVE;
+  let liveHtml;
+  if (live && live.length) {
+    const mineN = mine.map(cnorm);
+    const rows = live.slice().sort((a, b) =>
+      (mineN.includes(cnorm(b.county)) ? 1 : 0) - (mineN.includes(cnorm(a.county)) ? 1 : 0));
+    liveHtml = `<div style="overflow-x:auto"><table class="impact">
+      <tr><th>縣市</th><th>上班</th><th>上課</th></tr>
+      ${rows.map(r => {
+        const on = mineN.includes(cnorm(r.county));
+        const bad = t => /停止|不上|停班|停課/.test(t);
+        return `<tr${on ? ' style="background:var(--acc-d)"' : ''}>
+          <td>${esc(r.county)}${on ? '　<b style="color:var(--acc);font-size:0.6875rem">我的</b>' : ''}</td>
+          <td style="color:${bad(r.work) ? 'var(--no)' : 'var(--fg2)'}">${esc(r.work) || '—'}</td>
+          <td style="color:${bad(r.school) ? 'var(--no)' : 'var(--fg2)'}">${esc(r.school) || '—'}</td></tr>`;
+      }).join('')}</table></div>
+      <div class="hint" style="margin-top:0.5rem">取自您在設定填的公告來源，${fmtShort(DGPA_LIVE_AT)} 取得。</div>`;
+  } else if ((DB.cfg.dgpaUrl || '').trim()) {
+    liveHtml = `<div class="msg e" style="margin:0">公告來源取得失敗：${esc(DGPA_LIVE_ERR || '尚未取得')}。
+      請按下方連結直接看官方公告。</div>`;
+  } else {
+    liveHtml = `<div class="msg i" style="margin:0"><b>本程式不代抓即時公告。</b>
+      我沒有驗證過任何可跨網域取用的官方資料端點，寫一個猜的上去只會讓您看到錯的或空的資料。
+      請直接看官方公告；若您有可用的 JSON 端點，到設定「停班停課公告來源」填入即可自動帶進來。</div>`;
+  }
+
+  const rule = mine.length
+    ? mine.map(c => {
+        const r = DGPA_BY_NORM[cnorm(c)];
+        if (!r) return `<div>${esc(c)}：附表未列，本程式以平地 ${DGPA_FLAT}／山區 ${DGPA_HILL} 計。</div>`;
+        return `<div><b>${esc(r.name)}</b>：${r.hill === r.flat
+          ? `不分山區平地 ${r.flat}` : `山區 ${r.hill}／平地 ${r.flat}`} mm${
+          r.obs != null ? `　<span style="color:var(--sb)">實際觀測 ${r.obs} mm${
+            r.obsZone === 'flat' ? '（平地）' : ''}</span>` : ''}</div>`;
+      }).join('')
+    : '<div style="color:var(--fg4)">尚未有站臺或關注地點對應得到縣市。</div>';
+
+  return `<div class="sec"><h2>各縣市停班停課</h2>
+    <button class="act" onclick="fetchDgpa(true)">更新</button></div>
+    <div class="card pad" style="margin-bottom:0.75rem">
+      ${liveHtml}
+      <div class="btnrow" style="margin-top:0.625rem">
+        <a class="btn pri sm" href="${DGPA_URL}" target="_blank" rel="noopener"
+          style="text-decoration:none">開啟官方公告 ↗</a>
+      </div>
+      <div class="sec" style="margin-top:0.875rem"><h2>官方雨量基準（第四條附表）</h2></div>
+      <div style="font-family:var(--mono);font-size:0.75rem;line-height:1.9;color:var(--fg2)">${rule}</div>
+      <div class="hint" style="margin-top:0.5rem">附表單位為<b>未來 24 小時累積雨量預測</b>；
+        南投平地 300、宜蘭 250、連江 180 另訂<b>實際觀測</b>基準，同為決定及通報依據。
+        達到基準仍須已致災或有致災之虞，由地方政府綜合研判宣布。</div>
+    </div>`;
+}
+
 function suspendCard() {
   const targets = [
     ...DB.places.map(x => ({ ...x, kind: 'place' })),
@@ -2425,7 +2631,8 @@ function rainCell(st) {
     + `${v(r.h24)}</span><span style="font-size:0.6875rem;color:var(--fg4)"> mm/24h</span>`
     + (L ? `<b style="display:block;font-size:0.6875rem;color:${L.col}">${L.name}</b>` : '')
     + (() => { const m = dgpaMark(r.h24, st); return m
-        ? `<b style="display:block;font-size:0.6875rem;color:${m.col}">停班課${m.t}</b>` : ''; })()
+        ? `<b style="display:block;font-size:0.6875rem;color:${m.col}">停班課${m.t} ${m.thr}`
+          + `${m.official ? '（實測）' : ''}</b>` : ''; })()
     + `<span style="display:block;font-size:0.6875rem;color:var(--fg4)">`
     + `時雨 ${v(r.h1)}　${esc(r.name)} ${Math.round(rb.km)}km</span></td>`;
 }
@@ -2948,10 +3155,11 @@ function rainHint() {
   if (!RAIN.length) return '';
   return `雨量取最近雨量站（${RAIN.length} 站），分級依氣象署標準。`
     + '<b>關機門檻只看風，雨量供研判道路與積水風險。</b>'
-    + `停班停課參考基準依各站地形取一個：平地 ${DGPA_FLAT} mm、山區 ${DGPA_HILL} mm`
-    + '（地形設在設備類別，個別站臺可覆寫）；'
-    + '<b>官方基準看的是「預測」雨量，此處為雨量站「實測」累積，'
-    + '且達標仍須地方政府依致災情形研判，不等於一定停班停課。</b>';
+    + '停班停課基準依《天然災害停止上班及上課作業辦法》第四條附表逐縣市認定'
+    + `（多數縣市 ${DGPA_FLAT} mm，山區縣市山區 ${DGPA_HILL} mm，連江縣 200 mm）；`
+    + '<b>附表的值是「未來 24 小時累積雨量預測」，此處為雨量站「實測」累積 ——'
+    + '只有南投平地 300、宜蘭 250、連江 180 這三個縣訂了實際觀測基準，實測達標才是官方依據，'
+    + '其餘縣市拿實測去比只是參考。達標仍須地方政府依致災情形研判。</b>';
 }
 
 function obsHint() {
@@ -3158,8 +3366,8 @@ const tyTag = (html, cls, dy) => L.divIcon({
 });
 
 function drawMap(ty) {
-  if (window.__noLeaflet || typeof L === 'undefined' || !ty.pos) { $('#map').style.display = 'none'; return; }
-  $('#map').style.display = '';
+  if (window.__noLeaflet || typeof L === 'undefined' || !ty.pos) { $('#mapWrap').style.display = 'none'; return; }
+  $('#mapWrap').style.display = '';
   if (!MAP) {
     MAP = L.map('map', { attributionControl: true, zoomControl: true }).setView([23.7, 121], 5);
     MAP.attributionControl.setPrefix('');
@@ -3263,7 +3471,7 @@ function drawMap(ty) {
   /* 兩種框選：全域（颱風＋站臺一起看得到）與對焦站臺（只框自己的點）。
      颱風還在一千多公里外的時候,全域框出來站臺就是海岸線上的一小撮 ——
      「我的站臺現在長怎樣」那個問題,在那個縮放下根本回答不了。 */
-  const fit = () => {
+  const fit = MAPFIT = () => {
     const good = pts.filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
     const mine = MYPTS.filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
     const use = (MAPFOCUS === 'tw' && mine.length) ? mine : good;
@@ -3782,7 +3990,7 @@ function renderSettings() {
       <a class="btn sm" href="https://www.cwa.gov.tw/V8/C/P/Typhoon/TY_NEWS.html" target="_blank" rel="noopener" style="text-decoration:none">官方警報單</a>
       <a class="btn sm" href="https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html" target="_blank" rel="noopener" style="text-decoration:none">雷達回波</a>
       <a class="btn sm" href="https://watch.ncdr.nat.gov.tw/watch_page_typhoon_v2" target="_blank" rel="noopener" style="text-decoration:none">NCDR 監測網</a>
-      <a class="btn sm" href="https://www.dgpa.gov.tw/typh/daily/nds.html" target="_blank" rel="noopener" style="text-decoration:none">停班停課公告</a>
+      <a class="btn sm" href="${DGPA_URL}" target="_blank" rel="noopener" style="text-decoration:none">停班停課公告</a>
     </div>
   </div>
 
@@ -3805,6 +4013,21 @@ function renderSettings() {
     <label class="fld" style="margin-bottom:0"><span class="lb">海警近海範圍 公里</span>
       <input type="number" id="c_sea" min="0" max="300" step="10" value="${c.seaBuffer}">
       <span class="sub">暴風範圍進入海岸線外此距離內，視為將發布海上颱風警報。</span></label>
+  </div>
+
+  <div class="sec"><h2>停班停課公告來源</h2></div>
+  <div class="card pad" style="margin-bottom:1.125rem">
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">公告 JSON 端點（選填）</span>
+      <input type="text" id="c_dgpa" value="${esc(c.dgpaUrl || '')}"
+        placeholder="https://…（留空則只顯示官方連結）" autocomplete="off" spellcheck="false">
+      <span class="sub">本程式<b>不內建</b>即時公告來源——我沒有驗證過任何可跨網域取用的官方端點，
+        猜一個寫上去只會讓您看到錯的或空的資料。若您手上有可用的 JSON，填在這裡就會自動帶進颱風頁。
+        期待的格式：<code>[{"county":"臺中市","work":"照常上班","school":"停止上課"}]</code>，
+        欄位名稱中英文都接，認不出來的整筆略過。</span></label>
+    <div class="btnrow">
+      <a class="btn sm" href="${DGPA_URL}" target="_blank" rel="noopener" style="text-decoration:none">官方公告頁 ↗</a>
+      <button class="btn sm" onclick="fetchDgpa(true)">立即取得</button>
+    </div>
   </div>
 
   <div class="sec"><h2>設備與站臺</h2></div>
@@ -3890,6 +4113,7 @@ function renderSettings() {
   bind('#c_endA', e => { c.endA = e.target.value; save(); generate(); });
   bind('#c_endB', e => { c.endB = e.target.value; save(); generate(); });
   bind('#c_key', e => { c.cwaKey = e.target.value.trim(); save(); });
+  bind('#c_dgpa', e => { c.dgpaUrl = e.target.value.trim(); save(); fetchDgpa(true); });
   bind('#c_bfShut', e => { c.bfShut = +e.target.value; save(); refreshAll(); });
   bind('#c_bfEmerg', e => { c.bfEmerg = +e.target.value; save(); refreshAll(); });
   bind('#c_bfResume', e => { c.bfResume = +e.target.value; save(); refreshAll(); });
@@ -4030,6 +4254,30 @@ $('#tplSeg').addEventListener('click', e => {
 ['#optHum', '#optEmpty', '#optHead'].forEach(id => $(id).addEventListener('click', () => {
   const el = $(id); el.setAttribute('aria-pressed', String(el.getAttribute('aria-pressed') !== 'true')); generate();
 }));
+/* 全螢幕地圖。切換之後一定要 invalidateSize —— 容器換了大小,
+   Leaflet 不會自己知道,圖磚會停在舊尺寸的格線上。 */
+function toggleMapFull(on) {
+  const w = document.getElementById('mapWrap');
+  if (!w) return;
+  const next = on == null ? !w.classList.contains('full') : !!on;
+  w.classList.toggle('full', next);
+  document.body.style.overflow = next ? 'hidden' : '';
+  const b = document.getElementById('mapFull');
+  if (b) { b.textContent = next ? '✕' : '⛶'; b.title = next ? '離開全螢幕' : '全螢幕'; }
+  /* 換了大小之後不只要 invalidateSize,還要重新框一次 ——
+     不然全螢幕打開來,內容還擠在原本那 18.75rem 的位置,下面一大片空白。 */
+  /* 用 MAP 不是 window.MAP —— MAP 是頂層 `let`,不會掛到 window 上,
+     `window.MAP` 永遠是 undefined,整段就永遠不會執行。 */
+  if (MAP) setTimeout(() => {
+    MAP.invalidateSize();
+    if (typeof MAPFIT === 'function') MAPFIT();
+    declutterLabels();
+  }, 60);
+}
+document.getElementById('mapFull').addEventListener('click', () => toggleMapFull());
+addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('mapWrap').classList.contains('full')) toggleMapFull(false);
+});
 document.getElementById('mapFocus').addEventListener('click', e => {
   const b = e.target.closest('button[data-mf]'); if (!b) return;
   MAPFOCUS = b.dataset.mf;
@@ -4144,7 +4392,7 @@ let _windyReady = null;
 function renderWindyIfReady() { if (_windyReady) _windyReady(); }
 
 window.pickTyphoon = pickTyphoon; window.goTySub = goTySub; window.copyBrief = copyBrief; window.onTimeline = onTimeline;
-window.checkUpdate = checkUpdate;
+window.checkUpdate = checkUpdate; window.fetchDgpa = fetchDgpa;
 
 </script>
 
@@ -4226,7 +4474,10 @@ window.checkUpdate = checkUpdate;
   function applyTs(v) {
     document.documentElement.setAttribute('data-ts', v);
     // 地圖容器尺寸跟著字級變,Leaflet 需要被告知重新量測
-    if (window.MAP && MAP.invalidateSize) setTimeout(() => MAP.invalidateSize(), 60);
+    // 同上:頂層 let 不會出現在 window 上。原本這裡的字級切換其實沒有通知過地圖。
+    if (typeof MAP !== 'undefined' && MAP && MAP.invalidateSize) {
+      setTimeout(() => { MAP.invalidateSize(); if (MAPFIT) MAPFIT(); }, 60);
+    }
   }
   function setTs(v) {
     localStorage.setItem(TS_KEY, v);
