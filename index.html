@@ -28,6 +28,10 @@
   --ok:#3ECB92; --ok-d:#0B2A20;
   --sb:#EFAA35; --sb-d:#2C2011;
   --no:#EF5B4C; --no-d:#2E1512;
+  /* 自用監看（不列入回報）的類別自己一個顏色。
+     不能沿用開機／待機／關機那三色 —— 那三色講的是管制狀態,
+     這裡要講的是「這一臺不在交接名冊上」,是另一件事。 */
+  --aux:#9B7BEA; --aux-d:#1C1630;
   /* 蒲福風級色階 */
   --bf0:#3B5C6B; --bf1:#3B5C6B; --bf2:#3B5C6B; --bf3:#347A90;
   --bf4:#2C97A6; --bf5:#2BAE93; --bf6:#8FBE3D; --bf7:#DFC533;
@@ -177,6 +181,9 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .stat b{display:block;font-family:var(--mono);font-size:1.5625rem;font-weight:700;line-height:1}
 .stat small{font-size:0.6875rem;color:var(--fg3);letter-spacing:.09em}
 .stat .v-on b{color:var(--ok)} .stat .v-sb b{color:var(--sb)} .stat .v-off b{color:var(--no)}
+/* 沒有站臺在那個狀態就壓暗。紅色的「0」看起來像警報,其實是「一臺都沒關」。 */
+.stat div.zero{opacity:.42}
+.stat div.zero b{color:var(--fg3)!important}
 
 /* 戰力條：N 格＝N 站，一眼看出缺幾格 */
 .fleet{display:flex;gap:2px;height:0.5625rem;border-radius:0.3125rem;overflow:hidden;margin-bottom:0.375rem}
@@ -207,6 +214,20 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .tag-sb{background:var(--sb-d);color:var(--sb)}
 .tag-off{background:var(--no-d);color:var(--no)}
 .tag-pl{background:transparent;color:var(--fg4);border:1px dashed var(--edge2)}
+.tag-aux{background:var(--aux-d);color:var(--aux)}
+
+/* 兩指暫時放大。viewport 鎖住 maximum-scale=1 是為了不讓 iOS 在點輸入框時
+   把整頁抽走,代價是連想把小字看清楚都沒辦法。折衷:自己接兩指手勢,
+   撐開時放大內容,放開就彈回原狀 —— 是「暫時看一下」,不是換一個縮放層級。
+   要一直維持大字請用設定最上面的字級。 */
+main.peek{will-change:transform}
+main.peeking{transition:none}
+main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
+.chip.aux[aria-pressed=true]{border-color:var(--aux);color:var(--aux);background:var(--aux-d)}
+/* 自用監看的站臺卡整張框起來,而且框線是它自己的顏色 ——
+   它跟旁邊那些會進通報的卡片不是同一類東西,不該長得一樣。 */
+.st.aux{border-color:var(--aux);box-shadow:inset 0 0 0 1px var(--aux-d)}
+.st.aux .st-n em.auxlb{border-color:var(--aux);color:var(--aux);background:var(--aux-d)}
 
 /* 地圖上的站臺圖標。顏色講狀態（開機／待機／關機／未建置）,
    符號講類別（雷達／紅外線／中繼／其他）—— 兩件事分兩個通道,
@@ -228,10 +249,15 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .st-act{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--edge)}
 .st-act button{background:var(--surf);padding:0.6875rem 2px;font-size:0.8125rem;font-weight:600;color:var(--fg3)}
 .st-act button:active{background:var(--surf2)}
-.st-act button[disabled]{opacity:.28}
-.st-act .k-on:not([disabled]){color:var(--ok)}
-.st-act .k-sb:not([disabled]){color:var(--sb)}
-.st-act .k-off:not([disabled]){color:var(--no)}
+/* 有顏色的是「目前是什麼狀態」,不是「你可以按什麼」。
+   三顆同時亮著紅與琥珀,看起來像三個警告,而不是一個狀態。
+   目前狀態填色並保持不可按（已經是了）,其餘維持中性、仍然可按。 */
+.st-act button[disabled]{opacity:1}
+.st-act .k-on[disabled]{color:var(--ok);background:var(--ok-d);font-weight:700}
+.st-act .k-sb[disabled]{color:var(--sb);background:var(--sb-d);font-weight:700}
+.st-act .k-off[disabled]{color:var(--no);background:var(--no-d);font-weight:700}
+.st-act button:not([disabled]){color:var(--fg4)}
+.st-act button:not([disabled]):active{background:var(--surf2);color:var(--fg2)}
 .st-ord{display:flex;flex-direction:column;gap:2px;flex-shrink:0}
 .st-ord button{width:2.125rem;height:1.5rem;border:1px solid var(--edge2);border-radius:0.3125rem;
   display:grid;place-items:center;color:var(--fg3)}
@@ -991,7 +1017,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v21';
+const APP_VER = 'v22';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2180,17 +2206,25 @@ function renderStations() {
   $('#navDot').hidden = !down;
   $('#navDot').textContent = down;
 
-  /* 未建置的點不進站臺管制清單 —— 管制盤是「現在有幾臺、狀態如何」,
-     還沒架上去的東西擺在裡面只會佔位置。要看它得按「未建置」篩選,
-     或到設定的站臺清單去（那裡是完整的）。 */
+  /* 管制盤是「現在有幾臺、狀態如何」,所以預設只列「已建置、且會進交接通報」的站。
+     未建置的還沒架上去,自用監看的（中繼站臺）不進通報 —— 兩者擺在裡面只會佔位置。
+     要看它們得**明確點選**：按「未建置」篩選鈕,或點該類別的篩選鈕。
+     設定頁的站臺清單仍然是完整的。 */
   const list = sortStations(DB.stations.filter(s =>
-    (fType === 'all' || s.type === fType)
+    (fType === 'all' ? inReport(s) : s.type === fType)
     && (fStatus === 'all' ? s.status !== 'plan' : s.status === fStatus)), imp);
 
   const fleet = DB.stations.filter(s => IS_LIVE(s) && inReport(s))
     .map(s => `<i style="background:${S_COL[s.status]}"></i>`).join('');
   const typeChips = ['all', ...DB.types.filter(t => DB.stations.some(s => s.type === t.id)).map(t => t.id)]
-    .map(v => `<button class="chip" data-f="type" data-v="${v}" aria-pressed="${fType === v}">${v === 'all' ? '全部類別' : esc(typeOf(v).label)}</button>`).join('');
+    .map(v => {
+      const t = v === 'all' ? null : typeOf(v);
+      // 不列入回報的類別在預設清單裡看不到,篩選鈕上要標出來,否則會以為站臺不見了
+      const extra = t && t.noReport;
+      return `<button class="chip${extra ? ' aux' : ''}" data-f="type" data-v="${v}"
+        aria-pressed="${fType === v}">${v === 'all' ? '全部類別' : esc(t.label)}${
+        extra ? '<i style="font-style:normal;opacity:.7">＊</i>' : ''}</button>`;
+    }).join('');
   const stChips = [['all', '不限狀態'], ['off', '關機'], ['standby', '待機'], ['on', '開機']]
     .concat(n.plan ? [['plan', '未建置']] : [])
     .map(([v, l]) => `<button class="chip" data-f="status" data-v="${v}" aria-pressed="${fStatus === v}">${l}</button>`).join('');
@@ -2200,15 +2234,17 @@ function renderStations() {
 
   box.innerHTML = `
   <div class="stat">
-    <div class="v-on"><b>${n.on}</b><small>開機</small></div>
-    <div class="v-sb"><b>${n.standby}</b><small>待機</small></div>
-    <div class="v-off"><b>${n.off}</b><small>關機</small></div>
+    <div class="v-on${n.on ? '' : ' zero'}"><b>${n.on}</b><small>開機</small></div>
+    <div class="v-sb${n.standby ? '' : ' zero'}"><b>${n.standby}</b><small>待機</small></div>
+    <div class="v-off${n.off ? '' : ' zero'}"><b>${n.off}</b><small>關機</small></div>
   </div>
   ${(n.plan || n.extra) ? `<div class="hint" style="margin:-0.375rem 0 0.75rem">
-    另有${n.extra ? ` <b>${n.extra}</b> 處不列入回報（自用監看）` : ''}${
-      n.plan ? `${n.extra ? '、' : ' '}<b>${n.plan}</b> 處未建置（不在下方管制清單，按「未建置」可檢視）` : ''}，未計入上方戰力。</div>` : ''}
+    未計入戰力，也不在下方預設清單：${[
+      n.extra ? `<b style="color:var(--aux)">${n.extra}</b> 處自用監看（點該類別「＊」的篩選鈕檢視）` : '',
+      n.plan ? `<b>${n.plan}</b> 處未建置（按「未建置」檢視）` : '',
+    ].filter(Boolean).join('、')}。</div>` : ''}
   <div class="fleet">${fleet}</div>
-  <div class="fleet-lb"><span>戰力 ${n.on} / ${DB.stations.length}</span>
+  <div class="fleet-lb"><span>戰力 ${n.on} / ${n.on + n.standby + n.off}</span>
     <span>${maxBf >= 0 ? '現場最高推估 ' + bfLabel(maxBf)
       : !SERIES ? '尚無颱風資料，無風力推估'
       : '未設座標，無風力推估'}</span></div>
@@ -2253,13 +2289,14 @@ function stationCard(s, imp, i, total) {
       + (dm ? `　<b style="color:${dm.col};${nb}">停班課${dm.t} ${dm.thr}`
           + `${dm.official ? '（實際觀測）' : ''}</b>` : ''));
   }
-  return `<article class="st" data-id="${s.id}">
+  const aux = !inReport(s);
+  return `<article class="st${aux ? ' aux' : ''}" data-id="${s.id}">
     <div class="st-main">
-      <i class="st-i" style="background:${S_COL[s.status]}"></i>
+      <i class="st-i" style="background:${aux ? 'var(--aux)' : S_COL[s.status]}"></i>
       ${imp ? bfBadge(imp.now.bf, 'md') : ''}
       <div class="st-b">
-        <div class="st-n">${esc(s.name)} <em>${esc(t.label)}</em>${t.noReport
-          ? '<em style="border-color:var(--sb);color:var(--sb)" title="此類別不會出現在回報稿">不列入回報</em>' : ''}</div>
+        <div class="st-n">${esc(s.name)} <em>${esc(t.label)}</em>${aux
+          ? '<em class="auxlb" title="自用監看：不進交接通報、不計入戰力">自用監看</em>' : ''}</div>
         <div class="st-m">${meta.map(x => `<span>${x}</span>`).join('')}</div>
         ${s.note ? `<div class="st-m" style="color:var(--fg4)"><span>${esc(s.note)}</span></div>` : ''}
       </div>
@@ -2278,7 +2315,12 @@ function stationCard(s, imp, i, total) {
 }
 
 function renderRail() {
-  const evs = DB.stations.filter(IS_LIVE).sort((a, b) => b.at - a.at);
+  /* 時序要跟上面的清單一致 —— 上面看不到的站,下面卻在時序裡冒出來,
+     會讓人以為清單漏了誰。同一組條件:已建置、預設只列會進通報的,
+     點了某個類別就跟著只看那個類別。 */
+  const evs = DB.stations.filter(s => IS_LIVE(s)
+    && (fType === 'all' ? inReport(s) : s.type === fType))
+    .sort((a, b) => b.at - a.at);
   if (!evs.length) return '';
   let html = '<div class="rail">', day = '';
   for (const s of evs) {
@@ -4492,17 +4534,7 @@ window.checkUpdate = checkUpdate; window.fetchDgpa = fetchDgpa;
     wrap.className = 'card pad';
     wrap.style.marginTop = '0.875rem';
     wrap.innerHTML =
-      '<div class="sec"><h2>顯示</h2></div>' +
-      '<label class="fld" style="margin-bottom:0">' +
-      '<span class="lb">字級</span>' +
-      '<div class="seg" id="tsSeg" style="margin-bottom:0">' +
-      TS.map(([k, label]) =>
-        `<button type="button" data-ts="${k}" aria-pressed="${getTs() === k}">${label}</button>`
-      ).join('') +
-      '</div>' +
-      '<span class="sub">整個介面會一起縮放，不只字體。橫放手機時導覽列會自動移到左側。</span>' +
-      '</label>' +
-      '<div class="sec" style="margin-top:1.125rem"><h2>中央氣象署連線</h2></div>' +
+      '<div class="sec"><h2>中央氣象署連線</h2></div>' +
       '<label class="fld" style="margin-bottom:0">' +
       '<span class="lb">CWA 代理網址（選填）</span>' +
       `<input type="text" id="cwaProxyIn" placeholder="https://xxx.workers.dev" ` +
@@ -4543,6 +4575,81 @@ window.checkUpdate = checkUpdate; window.fetchDgpa = fetchDgpa;
         toast(DB.cfg.cwaProxy ? '已儲存代理網址' : '已清除代理網址');
       });
     }
+    return wrap;
+  }
+
+  /* ── 兩指暫時放大 ────────────────────────────────────────
+     只吃「兩根手指」的手勢,單指捲動完全不動它。
+     放大時以兩指中點為原點,才會放大你正在看的那一塊而不是畫面正中央。
+     手指離開就彈回 scale(1) —— 這是「湊近看一眼」,不是切換縮放層級。
+     地圖自己有雙指縮放,所以在地圖上不接管。                    */
+  (function pinchPeek() {
+    const el = document.querySelector('main');
+    if (!el) return;
+    const MAXK = 3;
+    let base = 0, k = 1, ox = 0, oy = 0, on = false;
+
+    const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const apply = () => { el.style.transform = k === 1 ? '' : `translate(${ox}px,${oy}px) scale(${k})`; };
+    const reset = () => {
+      on = false; k = 1; ox = oy = 0;
+      el.classList.remove('peeking');
+      el.classList.add('peek-back');
+      el.style.transform = '';
+      setTimeout(() => el.classList.remove('peek-back', 'peek'), 240);
+    };
+
+    el.addEventListener('touchstart', e => {
+      if (e.touches.length !== 2) return;
+      // 地圖有自己的雙指縮放,不搶
+      if (e.target.closest && e.target.closest('#mapWrap')) return;
+      const t = [e.touches[0], e.touches[1]];
+      base = dist(t);
+      if (!base) return;
+      on = true;
+      const r = el.getBoundingClientRect();
+      const cx = (t[0].clientX + t[1].clientX) / 2 - r.left;
+      const cy = (t[0].clientY + t[1].clientY) / 2 - r.top;
+      el.style.transformOrigin = `${cx}px ${cy}px`;
+      el.classList.add('peek', 'peeking');
+      el.classList.remove('peek-back');
+    }, { passive: true });
+
+    el.addEventListener('touchmove', e => {
+      if (!on || e.touches.length !== 2) return;
+      const d = dist([e.touches[0], e.touches[1]]);
+      if (!d || !base) return;
+      const next = clamp(d / base, 1, MAXK);
+      // 只放大不縮小 —— 縮到比原本還小沒有用途,而且會露出背景
+      if (next <= 1.01 && k <= 1.01) return;
+      k = next;
+      e.preventDefault();                 // 蓋掉瀏覽器自己的縮放與捲動
+      apply();
+    }, { passive: false });
+
+    const end = e => { if (on && e.touches.length < 2) reset(); };
+    el.addEventListener('touchend', end, { passive: true });
+    el.addEventListener('touchcancel', end, { passive: true });
+  })();
+
+  /* 字級擺在設定的**最上面**（使用者指定）。
+     它是「看不清楚的時候第一個要找的東西」,埋在版本號旁邊等於找不到。 */
+  function textSizeSection() {
+    const wrap = document.createElement('div');
+    wrap.className = 'card pad';
+    wrap.style.marginBottom = '1.125rem';
+    wrap.innerHTML =
+      '<div class="sec" style="margin-top:0"><h2>顯示</h2></div>' +
+      '<label class="fld" style="margin-bottom:0">' +
+      '<span class="lb">字級</span>' +
+      '<div class="seg" id="tsSeg" style="margin-bottom:0">' +
+      TS.map(([k, label]) =>
+        `<button type="button" data-ts="${k}" aria-pressed="${getTs() === k}">${label}</button>`
+      ).join('') +
+      '</div>' +
+      '<span class="sub">整個介面會一起縮放，不只字體。橫放手機時導覽列會自動移到左側。' +
+      '另外，在任何頁面都可以用兩指撐開暫時放大，放開就彈回原狀。</span>' +
+      '</label>';
     wrap.querySelector('#tsSeg').addEventListener('click', e => {
       const b = e.target.closest('button[data-ts]');
       if (!b) return;
@@ -4558,6 +4665,7 @@ window.checkUpdate = checkUpdate; window.fetchDgpa = fetchDgpa;
     const orig = window.renderSettings;
     window.renderSettings = function () {
       orig.apply(this, arguments);
+      cfgBody.insertBefore(textSizeSection(), cfgBody.firstChild);
       cfgBody.appendChild(displaySection());
     };
   }
