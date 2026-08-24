@@ -628,7 +628,7 @@ function blankDB() {
       endB: '持續掌握復勤及復機狀況。',
       cwaKey: '', auto: false,
       bfShut: 8, bfEmerg: 10, bfResume: 6, humMax: 70, leadMin: 60,
-      sort: 'ns', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
+      sort: 'ns', listSort: 'ns', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
     },
     since: 0, tpl: 'A', nsMigrated: true, terrMigrated: true,
   };
@@ -977,7 +977,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v19';
+const APP_VER = 'v20';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1732,6 +1732,55 @@ function stationImpact(series, st, cfg) {
 const SUSP_BF_MEAN = 7, SUSP_BF_GUST = 10, GUST_FACTOR = 1.3;
 const suspMeets = ms => ms2bf(ms) >= SUSP_BF_MEAN || ms2bf(ms * GUST_FACTOR) >= SUSP_BF_GUST;
 
+/* ── 雨量款：用氣象署的豪大雨特報當替代訊號 ──────────────
+   官方雨量款看的是「未來 24 小時累積雨量**預測**」,本程式沒有預測雨量。
+   但**豪大雨特報本身就是預測性質**,而且它的分級門檻跟停班停課的門檻同一個口徑:
+     超大豪雨 ≥ 500、大豪雨 ≥ 350（＝平地基準）、豪雨 ≥ 200（＝山區基準）。
+   所以「氣象署已對這個縣市發布大豪雨特報」＝「官方預測該地 24 小時雨量達 350 mm」,
+   這比拿雨量站的實測累積去比 350 更貼近官方的判斷口徑。
+
+   這仍然是**替代訊號不是官方數字**:特報是分級,不是那個縣市每一點的預測值;
+   而且雨量達標之後還要「已致災或有致災之虞」,宣布權仍在地方政府。       */
+const ADV_H24 = { 超大豪雨: 500, 大豪雨: 350, 豪雨: 200, 大雨: 80 };
+function advH24(kind) {
+  // 由重到輕比對 —— 「大豪雨」本身就含有「豪雨」兩個字,順序反了會降級。
+  for (const k of Object.keys(ADV_H24)) if (String(kind).includes(k)) return ADV_H24[k];
+  return 0;
+}
+// 臺／台混用是常態,比對前先統一
+const cnorm = v => String(v || '').replace(/[臺台]/g, '台');
+/* 站臺沒有縣市欄位,拿最近的雨量站（沒有就拿最近的氣象站）的縣市當作它所在的縣市。
+   兩者都在 60 km 以內才會被採用,同縣市的機會很高;真的對不上就回 null,
+   寧可不判斷也不要判斷錯 —— 說錯縣市就是說錯放假。 */
+function countyOf(st) {
+  const r = nearestRain(st); if (r && r.o.county) return r.o.county;
+  const o = nearestObs(st);  if (o && o.o.county) return o.o.county;
+  return '';
+}
+function advRainFor(st) {
+  const c = cnorm(countyOf(st));
+  if (!c || !ADV.length) return null;
+  const hill = terrainOf(st) === 'hill';
+  let best = null;
+  for (const a of ADV) {
+    const mm = advH24(a.kind);
+    if (!mm) continue;
+    for (const area of a.areas) {
+      const an = cnorm(area);
+      // 「臺中市山區」「南投縣山區」只算山區的點
+      if (/山區/.test(an) && !hill) continue;
+      const bare = an.replace(/(山區|平地|沿海|地區|北部|南部|東部|西部)+$/, '');
+      if (!an.includes(c) && !bare.includes(c) && !c.includes(bare)) continue;
+      if (!best || mm > best.mm) best = { mm, kind: a.kind, area, end: a.end, county: c };
+    }
+  }
+  if (!best) return null;
+  best.thr = TERRAIN[terrainOf(st)].thr;
+  best.label = TERRAIN[terrainOf(st)].label;
+  best.meets = best.mm >= best.thr;
+  return best;
+}
+
 /* 回傳達標的連續時段（可能不只一段,颱風眼通過時會斷開;
    間隔 3 小時以內視為同一段 —— 中間那一兩個小時沒有人會去上班）。 */
 function suspendWindows(series, p) {
@@ -1792,12 +1841,28 @@ function suspendDays(windows) {
 
 /* 一個地點的完整推估。給站臺用,也給關注地點用。 */
 function suspendFor(p) {
-  if (!SERIES || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return null;
-  const wins = suspendWindows(SERIES, { lat: p.lat, lng: p.lng });
-  if (!wins.length) return { wins: [], days: [] };
-  return { wins, days: suspendDays(wins) };
+  if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return null;
+  const wins = SERIES ? suspendWindows(SERIES, { lat: p.lat, lng: p.lng }) : [];
+  const rain = advRainFor(p);
+  /* 雨量款達標時,把特報的有效期間換算成「哪幾天」—— 用的是同一套
+     「有沒有蓋到上班時段」的規則,這樣兩款講出來的話才是同一種話。 */
+  const rainDays = (rain && rain.meets && rain.end)
+    ? suspendDays([{ from: Date.now(), to: rain.end, peakBf: 0 }]) : [];
+  return { wins, days: suspendDays(wins), rain, rainDays,
+    any: !!wins.length || !!(rain && rain.meets) };
 }
 const dayPhrase = r => `${relDay(r.day)}${r.whole ? '（推估全日）' : '（推估自中午起）'}`;
+/* 雨量款不做「全日／半日」的判斷。風力款有明確的達標起訖時刻,
+   可以看它有沒有蓋到上班時段;特報只是「這段期間這個縣市可能下到那個量」,
+   拿它去推「幾點開始放」是把分級當成逐時預測,講得比手上的資料還確定。 */
+const rainDayPhrase = r => relDay(r.day);
+/* 公告時點:已經過了就不要再寫「昨日 20:00 前」—— 那是廢話,也讓人以為漏看了。 */
+function notifyPhrase(d) {
+  const now = Date.now();
+  if (d.notify > now) return `公告時點通常為${fmtDayTime(d.notify)}前，來不及者於${fmtDayTime(d.lateNotify)}前補發`;
+  if (d.lateNotify > now) return `公告時點已過（${fmtDayTime(d.notify)}），如未公告會在${fmtDayTime(d.lateNotify)}前補發`;
+  return '公告時點已過，請直接查看人事行政總處公告';
+}
 
 /* ═══ 站臺當下建議 ═══════════════════════════════════════ */
 function advise(st, imp, cfg) {
@@ -2017,8 +2082,15 @@ function renderStations() {
     $('#navDot').hidden = true; paintBfBar(null); return;
   }
   const imp = impactMap();
-  const n = { on: 0, standby: 0, off: 0, plan: 0 };
-  DB.stations.forEach(s => { if (n[s.status] != null) n[s.status]++; });
+  /* 統計數字要跟交接通報對得起來。中繼站臺是自用監看、不列入回報,
+     算進戰力的話「開機 3 / 5」跟通報上寫的處數就對不上,
+     交接的時候那個差額沒有人解釋得出來。所以另外列。 */
+  const n = { on: 0, standby: 0, off: 0, plan: 0, extra: 0 };
+  DB.stations.forEach(s => {
+    if (s.status === 'plan') { n.plan++; return; }
+    if (!inReport(s)) { n.extra++; return; }
+    if (n[s.status] != null) n[s.status]++;
+  });
   const down = n.standby + n.off;
   $('#navDot').hidden = !down;
   $('#navDot').textContent = down;
@@ -2026,7 +2098,8 @@ function renderStations() {
   const list = sortStations(DB.stations.filter(s =>
     (fType === 'all' || s.type === fType) && (fStatus === 'all' || s.status === fStatus)), imp);
 
-  const fleet = DB.stations.filter(IS_LIVE).map(s => `<i style="background:${S_COL[s.status]}"></i>`).join('');
+  const fleet = DB.stations.filter(s => IS_LIVE(s) && inReport(s))
+    .map(s => `<i style="background:${S_COL[s.status]}"></i>`).join('');
   const typeChips = ['all', ...DB.types.filter(t => DB.stations.some(s => s.type === t.id)).map(t => t.id)]
     .map(v => `<button class="chip" data-f="type" data-v="${v}" aria-pressed="${fType === v}">${v === 'all' ? '全部類別' : esc(typeOf(v).label)}</button>`).join('');
   const stChips = [['all', '不限狀態'], ['off', '關機'], ['standby', '待機'], ['on', '開機']]
@@ -2042,8 +2115,9 @@ function renderStations() {
     <div class="v-sb"><b>${n.standby}</b><small>待機</small></div>
     <div class="v-off"><b>${n.off}</b><small>關機</small></div>
   </div>
-  ${n.plan ? `<div class="hint" style="margin:-0.375rem 0 0.75rem">
-    另有 <b>${n.plan}</b> 處未建置，不列入戰力、回報與關機推估。</div>` : ''}
+  ${(n.plan || n.extra) ? `<div class="hint" style="margin:-0.375rem 0 0.75rem">
+    另有${n.extra ? ` <b>${n.extra}</b> 處不列入回報（自用監看）` : ''}${
+      n.plan ? `${n.extra ? '、' : ' '}<b>${n.plan}</b> 處未建置` : ''}，未計入上方戰力。</div>` : ''}
   <div class="fleet">${fleet}</div>
   <div class="fleet-lb"><span>戰力 ${n.on} / ${DB.stations.length}</span>
     <span>${maxBf >= 0 ? '現場最高推估 ' + bfLabel(maxBf)
@@ -2259,7 +2333,6 @@ function renderTyphoon(o) {
    所以卡片上只講「推估達風力基準」,而且每一次都把三件事寫出來:
    ① 這是推估不是公告 ② 還要「已致災或有致災之虞」 ③ 宣布權在地方政府。 */
 function suspendCard() {
-  if (!SERIES) return '';
   const targets = [
     ...DB.places.map(x => ({ ...x, kind: 'place' })),
     // 未建置的點還沒有人在那裡上班,不必推估它幾點停班停課
@@ -2267,38 +2340,54 @@ function suspendCard() {
   ];
   if (!targets.length) return '';
   const rows = targets.map(x => ({ x, r: suspendFor(x) })).filter(v => v.r);
-  const hit = rows.filter(v => v.r.days.length);
+  const hit = rows.filter(v => v.r.any);
+  const head = `<div class="sec"><h2>停班停課推估</h2>
+    <button class="act" onclick="openPlace(null)">＋ 關注地點</button></div>`;
+  const foot = `<div class="msg w" style="margin:0.625rem 0 0">這是<b>本機推估，不是公告</b>。
+    《天然災害停止上班及上課作業辦法》兩款：<b>風力</b>——平均風 ${SUSP_BF_MEAN} 級以上或陣風 ${SUSP_BF_GUST} 級以上
+    （本程式由預報路徑逐時推算，陣風以持續風 ${GUST_FACTOR} 倍估算）；
+    <b>雨量</b>——24 小時累積雨量<b>預測</b>達平地 ${DGPA_FLAT}、山區 ${DGPA_HILL} 毫米
+    （本程式改看氣象署的豪大雨特報等級，特報本身即預測性質、門檻同一口徑，但它是分級不是逐點預測值）。
+    <b>達到基準不等於一定放假</b>——還要已致災或有致災之虞，且由地方政府綜合研判宣布。請以
+    <a href="https://www.dgpa.gov.tw/typh/daily/nds.html" target="_blank" rel="noopener">人事行政總處公告</a>為準。</div>`;
+
   if (!hit.length) {
-    return `<div class="sec"><h2>停班停課推估</h2>
-      <button class="act" onclick="openPlace(null)">＋ 關注地點</button></div>
-      <div class="card pad" style="margin-bottom:0.75rem">
-      <div class="msg i" style="margin:0">目前的預報路徑下，${targets.length} 個地點都沒有推估達到
-      停班停課的風力基準（平均風 ${SUSP_BF_MEAN} 級或陣風 ${SUSP_BF_GUST} 級）。
-      雨量那一款本程式算不出來——它要的是未來 24 小時累積雨量的<b>預測</b>。</div></div>`;
+    return head + `<div class="card pad" style="margin-bottom:0.75rem">
+      <div class="msg i" style="margin:0">${targets.length} 個地點都沒有推估達到停班停課的基準
+      （風力：平均風 ${SUSP_BF_MEAN} 級或陣風 ${SUSP_BF_GUST} 級；雨量：所在縣市未發布豪雨以上特報）。</div>
+      ${foot}</div>`;
   }
   const body = hit.map(({ x, r }) => {
-    const days = r.days.map(d =>
-      `<div style="margin-top:0.25rem"><b style="color:var(--no)">${dayPhrase(d)}</b>
-        <span style="color:var(--fg3)">　達標 ${fmtClock(d.from)}–${fmtClock(d.to)}　尖峰 ${d.peakBf} 級</span></div>`).join('');
-    const first = r.days[0];
+    const parts = [];
+    if (r.days.length) {
+      parts.push(`<div style="margin-top:0.3125rem">
+        <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">風力款</span>
+        ${r.days.map(d => `<b style="color:var(--no);margin-left:0.375rem">${dayPhrase(d)}</b>
+          <span style="color:var(--fg3)">達標 ${fmtClock(d.from)}–${fmtClock(d.to)}　尖峰 ${d.peakBf} 級</span>`).join('<br>')}</div>`);
+    }
+    if (r.rain && r.rain.meets) {
+      parts.push(`<div style="margin-top:0.3125rem">
+        <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">雨量款</span>
+        <b style="color:var(--no);margin-left:0.375rem">${r.rainDays.length
+          ? r.rainDays.map(rainDayPhrase).join('、') : '特報生效中'}</b>
+        <span style="color:var(--fg3)">氣象署${esc(r.rain.area)}${esc(r.rain.kind)}
+        （預測 24 小時 ≥ ${r.rain.mm} mm，達${r.rain.label}基準 ${r.rain.thr} mm）${
+          r.rain.end ? `，有效至 ${fmtShort(r.rain.end)}` : ''}</span></div>`);
+    } else if (r.rain) {
+      parts.push(`<div style="margin-top:0.3125rem;color:var(--fg4);font-size:0.75rem">
+        雨量款未達：${esc(r.rain.area)}${esc(r.rain.kind)}（${r.rain.mm} mm）＜ ${r.rain.label}基準 ${r.rain.thr} mm</div>`);
+    }
+    const first = r.days[0] || r.rainDays[0];
     return `<div style="padding:0.5rem 0;border-top:1px solid var(--edge)">
       <div><b>${esc(x.name)}</b>
         <em style="font-style:normal;font-size:0.6875rem;color:var(--fg4);margin-left:0.375rem">${
           x.kind === 'place' ? '關注地點' : esc(typeOf(x.type).label)}</em></div>
-      ${days}
-      <div style="font-size:0.6875rem;color:var(--fg4);margin-top:0.25rem">
-        公告時點通常為${fmtDayTime(first.notify)}前，來不及者於${fmtDayTime(first.lateNotify)}前補發</div>
+      ${parts.join('')}
+      ${first ? `<div style="font-size:0.6875rem;color:var(--fg4);margin-top:0.25rem">
+        ${notifyPhrase(first)}</div>` : ''}
     </div>`;
   }).join('');
-  return `<div class="sec"><h2>停班停課推估</h2>
-    <button class="act" onclick="openPlace(null)">＋ 關注地點</button></div>
-    <div class="card pad" style="margin-bottom:0.75rem">${body}
-    <div class="msg w" style="margin:0.625rem 0 0">這是<b>本機推估，不是公告</b>。
-    依《天然災害停止上班及上課作業辦法》，風力款為平均風 ${SUSP_BF_MEAN} 級以上或陣風 ${SUSP_BF_GUST} 級以上
-    （陣風以持續風 ${GUST_FACTOR} 倍估算）；另有雨量款（24 小時累積雨量<b>預測</b>達平地 ${DGPA_FLAT}、山區 ${DGPA_HILL} 毫米），
-    本程式沒有預測雨量，算不出來。<b>達到基準不等於一定放假</b>——還要已致災或有致災之虞，
-    且由地方政府綜合研判宣布。請以
-    <a href="https://www.dgpa.gov.tw/typh/daily/nds.html" target="_blank" rel="noopener">人事行政總處公告</a>為準。</div></div>`;
+  return head + `<div class="card pad" style="margin-bottom:0.75rem">${body}${foot}</div>`;
 }
 
 /* 豪大雨特報。放在播報頁 —— 它是寫通報時要抄的材料,
@@ -2449,7 +2538,8 @@ function briefText() {
       L.push(`站臺衝擊（系統推估，關機門檻 ${DB.cfg.bfShut} 級）`);
       if (hit.length) {
         for (const { x, i } of hit) {
-          L.push(`${IN}${x.name}：應於${fmtWhen(i.deadline)}前完成關機`
+          // 不列入回報的類別（中繼站臺）仍然要看,但要看得出來它不會出現在交接通報裡
+          L.push(`${IN}${x.name}${inReport(x) ? '' : '（不列入回報）'}：應於${fmtWhen(i.deadline)}前完成關機`
             + `（尖峰 ${i.peak.bf} 級於${fmtWhen(i.peak.t)}`
             + (i.resume ? `，${fmtWhen(i.resume.t)}起可評估復機` : '') + '）。');
         }
@@ -2476,25 +2566,34 @@ function briefText() {
   }
 
   // ── 停班停課推估 ──
-  if (SERIES) {
+  {
     const tg = [
       ...DB.places.map(x => ({ ...x, kind: 'place' })),
       ...withXY.map(x => ({ ...x, kind: 'st' })),
     ];
-    const hits = tg.map(x => ({ x, r: suspendFor(x) })).filter(v => v.r && v.r.days.length);
+    const hits = tg.map(x => ({ x, r: suspendFor(x) })).filter(v => v.r && v.r.any);
     if (hits.length) {
       L.push('');
       L.push('停班停課推估（本機推估，非公告）');
       for (const { x, r } of hits) {
-        L.push(`${IN}${x.name}：${r.days.map(d =>
-          `${dayPhrase(d)} ${fmtClock(d.from)}–${fmtClock(d.to)}`).join('、')}` +
-          `，尖峰 ${Math.max(...r.days.map(d => d.peakBf))} 級。`);
+        const seg = [];
+        if (r.days.length) {
+          seg.push(`風力款 ${r.days.map(d => `${dayPhrase(d)} ${fmtClock(d.from)}–${fmtClock(d.to)}`).join('、')}`
+            + `（尖峰 ${Math.max(...r.days.map(d => d.peakBf))} 級）`);
+        }
+        if (r.rain && r.rain.meets) {
+          seg.push(`雨量款 ${r.rainDays.length ? r.rainDays.map(rainDayPhrase).join('、') : '特報生效中'}`
+            + `（氣象署${r.rain.area}${r.rain.kind}，預測 24 小時 ≥ ${r.rain.mm} 毫米，`
+            + `達${r.rain.label}基準 ${r.rain.thr} 毫米）`);
+        }
+        L.push(`${IN}${x.name}：${seg.join('；')}。`);
       }
-      const f = hits[0].r.days[0];
-      L.push(`${IN}公告時點通常為${fmtDayTime(f.notify)}前，來不及者於${fmtDayTime(f.lateNotify)}前補發。`);
-      L.push(`${IN}※ 依據為風力款：平均風 ${SUSP_BF_MEAN} 級以上或陣風 ${SUSP_BF_GUST} 級以上`
-        + `（陣風以持續風 ${GUST_FACTOR} 倍估算）。另有雨量款（24 小時累積雨量「預測」達`
-        + `平地 ${DGPA_FLAT}、山區 ${DGPA_HILL} 毫米），本程式沒有預測雨量，未納入判斷。`
+      const f = hits[0].r.days[0] || hits[0].r.rainDays[0];
+      if (f) L.push(`${IN}${notifyPhrase(f)}。`);
+      L.push(`${IN}※ 依《天然災害停止上班及上課作業辦法》兩款：風力為平均風 ${SUSP_BF_MEAN} 級以上`
+        + `或陣風 ${SUSP_BF_GUST} 級以上（此處由預報路徑逐時推算，陣風以持續風 ${GUST_FACTOR} 倍估算）；`
+        + `雨量為 24 小時累積雨量「預測」達平地 ${DGPA_FLAT}、山區 ${DGPA_HILL} 毫米`
+        + '（此處改看氣象署豪大雨特報等級，特報本身即預測性質、門檻同一口徑，但它是分級不是逐點預測值）。'
         + '達到基準不等於一定放假——還要已致災或有致災之虞，且由地方政府綜合研判宣布，'
         + '請以人事行政總處公告為準。');
     }
@@ -3501,6 +3600,25 @@ function openStation(id) {
     });
 }
 
+/* ── 設定頁清單的排序 ────────────────────────────────────
+   站臺頁的排序（DB.cfg.sort）是給值班掃狀態用的,會用到風級、離颱風遠近;
+   設定頁的清單是用來「找到某一站去改它」,要的只有地理位置與名字。
+   兩個分開存,互不影響。 */
+const LIST_SORT = { ns: '由北至南', name: '名稱', type: '類別', custom: '自訂順序' };
+const listSortKey = () => (LIST_SORT[DB.cfg.listSort] ? DB.cfg.listSort : 'ns');
+function sortForList(list) {
+  const k = listSortKey();
+  const arr = list.slice();
+  if (k === 'custom') return arr;
+  const ti = id => DB.types.findIndex(t => t.id === id);
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hant');
+  const byNs = (a, b) =>
+    (Number.isFinite(b.lat) ? b.lat : -1e3) - (Number.isFinite(a.lat) ? a.lat : -1e3) || byName(a, b);
+  if (k === 'name') return arr.sort(byName);
+  if (k === 'type') return arr.sort((a, b) => (ti(a.type) - ti(b.type)) || byNs(a, b));
+  return arr.sort(byNs);
+}
+
 /* ── 關注地點 ────────────────────────────────────────────
    跟站臺共用座標解析,但沒有狀態、沒有類別、沒有回報 ——
    它只回答一個問題:那裡幾點可能停班停課。 */
@@ -3696,15 +3814,21 @@ function renderSettings() {
     <div class="sw"><div class="sw-t"><b>站臺清單</b>
       <small>共 ${DB.stations.length} 站，其中 ${DB.stations.filter(s => Number.isFinite(s.lat)).length} 站已填座標</small></div>
       <button class="btn sm" onclick="openStation(null)">新增</button></div>
-    ${DB.stations.length ? `<div style="margin-top:0.625rem">${DB.stations.map(s =>
+    ${DB.stations.length ? `
+    <div class="seg" id="listSortSeg" style="margin-top:0.625rem">
+      ${Object.entries(LIST_SORT).map(([k, v]) =>
+        `<button type="button" data-ls="${k}" aria-pressed="${listSortKey() === k}">${v}</button>`).join('')}
+    </div>
+    <div style="margin-top:0.5rem">${sortForList(DB.stations).map(s =>
       `<button class="btn sm wide" style="justify-content:space-between;margin-bottom:0.375rem" onclick="openStation('${s.id}')">
-        <span>${esc(s.name)}</span>
+        <span>${esc(s.name)}<em style="font-style:normal;font-size:0.6875rem;color:var(--fg4);margin-left:0.375rem">${
+          esc(typeOf(s.type).label)}${s.status === 'plan' ? '　未建置' : ''}</em></span>
         <span class="mono" style="color:${Number.isFinite(s.lat) ? 'var(--acc)' : 'var(--fg4)'};font-size:0.7188rem">
           ${Number.isFinite(s.lat) ? fmtCoord(s.lat, s.lng) : '未設座標'}</span></button>`).join('')}</div>` : ''}
     <div class="sw" style="margin-top:0.625rem"><div class="sw-t"><b>關注地點</b>
       <small>住家、學校、家人所在地。只推估停班停課時段，不做設備管制</small></div>
       <button class="btn sm" onclick="openPlace(null)">新增</button></div>
-    ${DB.places.length ? `<div style="margin-top:0.625rem">${DB.places.map(x =>
+    ${DB.places.length ? `<div style="margin-top:0.625rem">${sortForList(DB.places).map(x =>
       `<button class="btn sm wide" style="justify-content:space-between;margin-bottom:0.375rem" onclick="openPlace('${x.id}')">
         <span>${esc(x.name)}</span>
         <span class="mono" style="color:var(--acc);font-size:0.7188rem">${fmtCoord(x.lat, x.lng)}</span></button>`).join('')}</div>` : ''}
@@ -3756,6 +3880,11 @@ function renderSettings() {
 
   // 綁定
   const bind = (id, fn) => { const el = $(id); if (el) el.addEventListener('change', fn); };
+  const lsSeg = $('#listSortSeg');
+  if (lsSeg) lsSeg.addEventListener('click', e => {
+    const b = e.target.closest('button[data-ls]'); if (!b) return;
+    c.listSort = b.dataset.ls; save(); renderSettings();
+  });
   bind('#c_unit', e => { c.unit = e.target.value.trim(); save(); generate(); });
   bind('#c_introA', e => { c.introA = e.target.value; save(); generate(); });
   bind('#c_endA', e => { c.endA = e.target.value; save(); generate(); });
