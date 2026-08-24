@@ -918,7 +918,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v14';
+const APP_VER = 'v15';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1315,6 +1315,21 @@ const RAIN_LEVELS = [
   { name: '豪雨',     h24: 200, h3: 100, col: '#EF8A35' },
   { name: '大雨',     h24: 80,  h1: 40,  col: '#EFC935' },
 ];
+
+/* 停班停課的雨量參考基準（天然災害停止上班及上課作業辦法）:
+   未來 24 小時累積雨量**預測**達山區 200 mm、平地 350 mm
+   （部分縣市不分山區平地皆 350 mm 或自訂 200 mm）,
+   **且已致災或有致災之虞**時,由地方政府綜合研判宣布。
+
+   兩件事必須講清楚,否則這個數字會被當成「要放假了」:
+   ① 官方基準看的是「預測」,這裡拿得到的是雨量站的「實測累積」——
+      不是同一回事,實測達標只代表「已經下到那個量」。
+   ② 達標不等於一定停班停課 —— 決定權在地方政府,還要看有沒有致災。
+   所以標的是「已達參考基準」,不是「將停班停課」。            */
+const DGPA_HILL = 200, DGPA_FLAT = 350;
+const dgpaMark = h24 => h24 == null ? null
+  : h24 >= DGPA_FLAT ? { t: '已達平地基準', col: '#B0186B' }
+  : h24 >= DGPA_HILL ? { t: '已達山區基準', col: '#EF5B4C' } : null;
 
 function rainLevel(r) {
   if (!r) return null;
@@ -1891,8 +1906,12 @@ function stationCard(s, imp, i, total) {
   const rb = nearestRain(s);
   if (rb && rb.o.h24 != null) {
     const L = rainLevel(rb.o);
-    meta.push(`24 小時雨量 ${Math.round(rb.o.h24)} mm`
-      + (L ? `　<b style="color:${L.col}">${L.name}</b>` : ''));
+    const dm = dgpaMark(rb.o.h24);
+    // 等級與停班課標記本身不該被折行拆開——「大／豪雨」分兩行會看成兩個等級。
+    const nb = 'white-space:nowrap';
+    meta.push(`<span style="${nb}">24 小時雨量 ${Math.round(rb.o.h24)} mm</span>`
+      + (L ? `　<b style="color:${L.col};${nb}">${L.name}</b>` : '')
+      + (dm ? `　<b style="color:${dm.col};${nb}">停班課${dm.t}</b>` : ''));
   }
   return `<article class="st" data-id="${s.id}">
     <div class="st-main">
@@ -2089,6 +2108,8 @@ function rainCell(st) {
   return `<td><span style="font-family:var(--mono);font-weight:700;color:${L ? L.col : 'var(--fg2)'}">`
     + `${v(r.h24)}</span><span style="font-size:0.6875rem;color:var(--fg4)"> mm/24h</span>`
     + (L ? `<b style="display:block;font-size:0.6875rem;color:${L.col}">${L.name}</b>` : '')
+    + (() => { const m = dgpaMark(r.h24); return m
+        ? `<b style="display:block;font-size:0.6875rem;color:${m.col}">停班課${m.t}</b>` : ''; })()
     + `<span style="display:block;font-size:0.6875rem;color:var(--fg4)">`
     + `時雨 ${v(r.h1)}　${esc(r.name)} ${Math.round(rb.km)}km</span></td>`;
 }
@@ -2214,12 +2235,24 @@ function briefText() {
   }
 
   // ── 雨量實測 ──
+  let anyDgpa = false;
   const rains = withXY.map(x => {
     const rb = nearestRain(x);
     const lv = rb && rainLevel(rb.o);
-    return lv ? `${IN}${x.name}：鄰近${rb.o.name}站 24 小時累積 ${Math.round(rb.o.h24)} 毫米（${lv.name}等級）。` : null;
+    if (!lv) return null;
+    const m = dgpaMark(rb.o.h24);
+    if (m) anyDgpa = true;
+    return `${IN}${x.name}：鄰近${rb.o.name}站 24 小時累積 ${Math.round(rb.o.h24)} 毫米`
+      + `（${lv.name}等級${m ? `，已達停班停課雨量參考基準之${m.t.replace('已達', '')}` : ''}）。`;
   }).filter(Boolean);
-  if (rains.length) { L.push(''); L.push('雨量實測（自動雨量站）'); L.push(...rains); }
+  if (rains.length) {
+    L.push(''); L.push('雨量實測（自動雨量站）'); L.push(...rains);
+    if (anyDgpa) {
+      L.push(`${IN}※ 停班停課基準為未來 24 小時累積雨量「預測」達山區 ${DGPA_HILL} 毫米、`
+        + `平地 ${DGPA_FLAT} 毫米，且已致災或有致災之虞，由地方政府研判宣布；`
+        + '上列為雨量站實測累積，達標不等於已宣布停班停課，請以人事行政總處公告為準。');
+    }
+  }
 
   // ── 注意事項 ──
   L.push('');
@@ -2488,7 +2521,10 @@ function obsCell(st, estBf) {
 function rainHint() {
   if (!RAIN.length) return '';
   return `雨量取最近雨量站（${RAIN.length} 站），分級依氣象署標準。`
-    + '<b>關機門檻只看風，雨量供研判道路與積水風險。</b>';
+    + '<b>關機門檻只看風，雨量供研判道路與積水風險。</b>'
+    + `停班停課參考基準為 24 小時山區 ${DGPA_HILL} mm、平地 ${DGPA_FLAT} mm；`
+    + '<b>官方基準看的是「預測」雨量，此處為雨量站「實測」累積，'
+    + '且達標仍須地方政府依致災情形研判，不等於一定停班停課。</b>';
 }
 
 function obsHint() {
@@ -3108,6 +3144,7 @@ function renderSettings() {
       <a class="btn sm" href="https://www.cwa.gov.tw/V8/C/P/Typhoon/TY_NEWS.html" target="_blank" rel="noopener" style="text-decoration:none">官方警報單</a>
       <a class="btn sm" href="https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html" target="_blank" rel="noopener" style="text-decoration:none">雷達回波</a>
       <a class="btn sm" href="https://watch.ncdr.nat.gov.tw/watch_page_typhoon_v2" target="_blank" rel="noopener" style="text-decoration:none">NCDR 監測網</a>
+      <a class="btn sm" href="https://www.dgpa.gov.tw/typh/daily/nds.html" target="_blank" rel="noopener" style="text-decoration:none">停班停課公告</a>
     </div>
   </div>
 
@@ -3697,9 +3734,13 @@ window.checkUpdate = checkUpdate;
             style="text-decoration:none">Windy 全畫面 ↗</a>
          <a class="btn sm" href="https://watch.ncdr.nat.gov.tw/watch_page_typhoon_v2"
             target="_blank" rel="noopener" style="text-decoration:none">NCDR 颱風監測 ↗</a>
+         <a class="btn sm" href="https://www.dgpa.gov.tw/typh/daily/nds.html"
+            target="_blank" rel="noopener" style="text-decoration:none">停班停課公告 ↗</a>
        </div>` +
       '<p class="hint" style="margin-top:0.5rem">NCDR 天氣與氣候監測網：各國預報路徑比對' +
-      '（氣象署／美軍／日本／韓國／中國）、衛星雲圖、雨量與風速監測。</p>' +
+      '（氣象署／美軍／日本／韓國／中國）、衛星雲圖、雨量與風速監測。<br>' +
+      '停班停課：行政院人事行政總處公告，各縣市由地方政府宣布，' +
+      '本程式不代為判斷，請以公告為準。</p>' +
       '<p class="hint" style="margin-top:0.5rem">Windy 為實際觀測與模式繪圖，需連網。' +
       '風哨的關機、復機時間仍是本機推估，兩者請分開看。</p>';
 
