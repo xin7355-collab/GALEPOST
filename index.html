@@ -170,7 +170,7 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .bf.sm{width:2.25rem;height:2.25rem;border-radius:var(--r3)}
 .bf.sm b{font-size:1rem}.bf.sm small{display:none}
 
-/* ── 站台卡 ───────────────────────────────────────────── */
+/* ── 站臺卡 ───────────────────────────────────────────── */
 .stat{display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;margin-bottom:0.875rem}
 .stat div{background:var(--surf);border:1px solid var(--edge);border-radius:var(--r2);
   padding:0.6875rem 0.75rem}
@@ -465,7 +465,7 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
     <button type="button" data-ty="brief" aria-pressed="false">播報</button>
     <button type="button" data-ty="map" aria-pressed="false">路徑</button>
     <button type="button" data-ty="live" aria-pressed="false">實況</button>
-    <button type="button" data-ty="st" aria-pressed="false">站台</button>
+    <button type="button" data-ty="st" aria-pressed="false">站臺</button>
   </div>
   <div class="typane on" id="ty-now">
     <div id="tyWarn"></div>
@@ -481,7 +481,7 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
   <div class="typane" id="ty-st"><div id="tyImpact"></div></div>
 </section>
 
-<!-- ══════════ 站台 ══════════ -->
+<!-- ══════════ 站臺 ══════════ -->
 <section class="pane on" id="p-eq">
   <div id="eqBody"></div>
 </section>
@@ -498,9 +498,9 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
       <span class="sub">會代入初報的起始語句。查得官方颱風資料時會自動帶入，也可手動覆寫。</span></label>
     <label class="fld"><span class="lb">已復機起算時間</span>
       <input type="datetime-local" id="since">
-      <span class="sub">只列出此時間之後完成開機的站台。每次發報後按下方「標記已回報」即自動推進。</span>
+      <span class="sub">只列出此時間之後完成開機的站臺。每次發報後按下方「標記已回報」即自動推進。</span>
     </label>
-    <div class="sw"><div class="sw-t"><b>顯示濕度</b><small>僅標註於未開機的站台</small></div>
+    <div class="sw"><div class="sw-t"><b>顯示濕度</b><small>僅標註於未開機的站臺</small></div>
       <button class="tgl" id="optHum" aria-pressed="true"></button></div>
     <div class="sw"><div class="sw-t"><b>空白區塊標示「無」</b><small>關閉則整個區塊不出現</small></div>
       <button class="tgl" id="optEmpty" aria-pressed="true"></button></div>
@@ -516,7 +516,7 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
   <div class="sec" style="margin-top:1.625rem"><h2>從既有回報建檔</h2></div>
   <div class="card pad">
     <p class="hint" style="margin-bottom:0.6875rem">
-      把過去發過的回報文字整段貼進來，程式會解析出站台名稱、狀態與時間並自動建檔或更新，
+      把過去發過的回報文字整段貼進來，程式會解析出站臺名稱、狀態與時間並自動建檔或更新，
       不必逐站手動輸入。解析採用您原本的句型：<code>1.○○雷達站於1310時完成關機（7月10日）。</code>
     </p>
     <textarea id="impText" rows="5" placeholder="貼上整段回報文字…"></textarea>
@@ -539,7 +539,7 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
     <span>颱風</span></button>
   <button role="tab" data-p="eq" aria-selected="true">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 12 20 7"/><path d="M4.9 19.1A10 10 0 1 1 19.1 4.9"/><path d="M8.5 15.5a5 5 0 1 1 7-7"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>
-    <span>站台</span><i class="dot" id="navDot" hidden></i></button>
+    <span>站臺</span><i class="dot" id="navDot" hidden></i></button>
   <button role="tab" data-p="rp" aria-selected="false">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
     <span>回報</span></button>
@@ -571,7 +571,7 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 /* ═══════════════════════════════════════════════════════════════
    風哨 GALEPOST — 颱風期間岸際設備開關待機管制
    單檔離線應用。所有資料只存在本機瀏覽器，不上傳任何伺服器。
-   站台清單、座標、門檻全部由使用者自建，程式不內建任何實際單位資料。
+   站臺清單、座標、門檻全部由使用者自建，程式不內建任何實際單位資料。
    ═══════════════════════════════════════════════════════════════ */
 'use strict';
 
@@ -584,7 +584,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
-/* ── 預設設定：不含任何實際站台或單位資料 ───────────────── */
+/* ── 預設設定：不含任何實際站臺或單位資料 ───────────────── */
 function blankDB() {
   return {
     v: 2,
@@ -604,9 +604,9 @@ function blankDB() {
       endB: '持續掌握復勤及復機狀況。',
       cwaKey: '', auto: false,
       bfShut: 8, bfEmerg: 10, bfResume: 6, humMax: 70, leadMin: 60,
-      sort: 'custom', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
+      sort: 'ns', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
     },
-    since: 0, tpl: 'A',
+    since: 0, tpl: 'A', nsMigrated: true,
   };
 }
 
@@ -618,11 +618,31 @@ let DB = blankDB();
     const o = JSON.parse(raw);
     if (!o || typeof o !== 'object') return;
     const base = blankDB();
+    /* 預設值要先抓在手上。`Object.assign(base, o)` 會就地改掉 base ——
+       之後 base.cfg 已經是存檔裡那一份,再 assign 一次等於拿自己蓋自己,
+       存檔裡沒有的鍵就永遠是 undefined。新版加的設定（seaBuffer、bfEmerg
+       之類）對舊使用者全部會是 undefined,而 `風級 >= undefined` 恆為 false
+       —— 關機門檻會整個失效。這是原本就有的錯,順手修掉。 */
+    const defCfg = base.cfg, defTy = base.ty, defTypes = base.types;
     DB = Object.assign(base, o);
-    DB.cfg = Object.assign(base.cfg, o.cfg || {});
-    DB.ty = Object.assign(base.ty, o.ty || {});
-    if (!Array.isArray(DB.types) || !DB.types.length) DB.types = base.types;
+    DB.cfg = Object.assign({}, defCfg, o.cfg || {});
+    DB.ty = Object.assign({}, defTy, o.ty || {});
+    if (!Array.isArray(DB.types) || !DB.types.length) DB.types = defTypes;
     if (!Array.isArray(DB.stations)) DB.stations = [];
+    /* 預設排序從「自訂順序」改成「地點由北至南」。舊的設定檔裡是 custom,
+       不搬過來的話已經裝過的人永遠看不到這個改動。只搬一次（留旗標）,
+       之後使用者自己選什麼就是什麼。自訂順序存在 DB.stations 的陣列順序裡,
+       沒有被動到 —— 切回「自訂順序」原本的排法就回來了。 */
+    // 旗標要看「存進去的那份」有沒有,不能看合併後的 DB ——
+    // blankDB() 已經帶 nsMigrated:true,合併後永遠是 true,遷移就永遠不會跑。
+    if (!o.nsMigrated) {
+      if (DB.cfg.sort === 'custom') DB.cfg.sort = 'ns';
+      DB.nsMigrated = true;
+      // save() 用到的 _saveT 是 let,此刻還在 TDZ,直接呼叫會丟 ReferenceError
+      // 並被下面的 catch 吞掉 —— 排到下一輪事件迴圈再寫。沒寫成功的話
+      // 使用者之後選了「自訂順序」,下次載入又會被搬成 ns。
+      setTimeout(save, 0);
+    }
   } catch (e) { console.warn('本機資料讀取失敗，改用空白設定', e); }
 })();
 
@@ -706,7 +726,7 @@ const KT2MS = 0.514444;
 /* ═══ 萬用座標輸入解析 ═══════════════════════════════════
    支援：24.2534,120.5123 ／ 24°15'12"N 120°30'44"E ／ N24 15.2 E120 30.5
         ／ 241512N 1203044E ／ 2415.20N 12030.50E（海圖式）／ 全形符號
-   台灣周邊會自動判斷經緯是否顛倒。                              */
+   臺灣周邊會自動判斷經緯是否顛倒。                              */
 function parseCoord(input) {
   if (!input) return null;
   let s = String(input).trim().toUpperCase()
@@ -771,7 +791,7 @@ function parseCoord(input) {
     }
   }
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  // 經緯顛倒自動修正（台灣周邊：緯 20–27、經 116–125）
+  // 經緯顛倒自動修正（臺灣周邊：緯 20–27、經 116–125）
   if (!(lat >= 20 && lat <= 27) && (lng >= 20 && lng <= 27) && (lat >= 116 && lat <= 125)) {
     const t = lat; lat = lng; lng = t;
   }
@@ -834,7 +854,7 @@ function destPoint(p, brgDeg, km) {
   return { lat: deg(lat2), lng: ((deg(lon2) + 540) % 360) - 180 };
 }
 
-/* ── 台灣及離島輪廓（公開地理資料，供警報範圍推估） ────── */
+/* ── 臺灣及離島輪廓（公開地理資料，供警報範圍推估） ────── */
 const TW_OUTLINE = [
   [25.30, 121.53], [25.16, 121.72], [25.01, 121.94], [24.85, 121.84], [24.60, 121.86],
   [24.32, 121.84], [23.98, 121.62], [23.60, 121.50], [23.10, 121.38], [22.75, 121.15],
@@ -852,15 +872,15 @@ function distToOutline(p) {                   // 只算到本島海岸
   for (const q of TW_OUTLINE) m = Math.min(m, distKm(p, q));
   return m;
 }
-function distToTaiwan(p) {                    // 到台灣本島或離島最近距離（km）
+function distToTaiwan(p) {                    // 到臺灣本島或離島最近距離（km）
   let m = distToOutline(p);
   for (const q of TW_ISLES) m = Math.min(m, distKm(p, q));
   return m;
 }
 
-/* ── 台灣近海 N 公里界線 ──────────────────────────────────
+/* ── 臺灣近海 N 公里界線 ──────────────────────────────────
    海上颱風警報的門檻:暴風範圍可能在 24 小時內進入
-   台灣、澎湖、金門、馬祖近海 100 公里以內海域。
+   臺灣、澎湖、金門、馬祖近海 100 公里以內海域。
    這條線畫出來,就看得到暴風圈還差多遠碰到門檻。
 
    重點:直接拿 distToOutline 這個函式本身反解等值線,
@@ -911,14 +931,14 @@ async function sha256(s) {
   return b64e(h);
 }
 /* ═══════════════════════════════════════════════════════════════
-   颱風：資料取得 → 逐時內插 → 風場推算 → 警報與站台預判
+   颱風：資料取得 → 逐時內插 → 風場推算 → 警報與站臺預判
    所有預判皆為推估值，供先期作業參考，正式研判以中央氣象署警報單為準。
    ═══════════════════════════════════════════════════════════════ */
 const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v15';
+const APP_VER = 'v16';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -942,7 +962,7 @@ function parseLL(v) {
 
 /* ── 中央氣象署 W-C0034-005 颱風路徑潛勢預報 ─────────────── */
 /* 一份回應裡可能同時有好幾顆熱帶氣旋（雙颱、三颱都發生過）。
-   全部解析出來，依「距台灣遠近」排序後整串回傳，由介面讓人自己挑要看哪顆。
+   全部解析出來，依「距臺灣遠近」排序後整串回傳，由介面讓人自己挑要看哪顆。
    之前這裡只取 list[0]，等於把其他颱風靜靜丟掉 —— 同一把授權碼、
    同一份資料，看起來卻只有一顆，就是這個原因。                        */
 /* 上一批回應裡「氣象署給了幾顆」與「我們解析出幾顆」。
@@ -1028,7 +1048,7 @@ function parseCyclone(c) {
   /* 七級風半徑。氣象署沒給的時候才用強度推估 ——
      但只有「已經是颱風」才有暴風範圍可言。熱帶性低氣壓給 0,
      不能替一個沒有暴風圈的系統憑空生一個 150 公里出來,
-     那會讓後面的警報推算以為暴風範圍已經罩住台灣。          */
+     那會讓後面的警報推算以為暴風範圍已經罩住臺灣。          */
   const r15 = Math.round(galeRadius(cur)) ||
     (vmax >= 33 ? 250 : vmax >= 25 ? 200 : vmax >= TY_MIN_MS ? 150 : 0);
 
@@ -1279,7 +1299,7 @@ async function fetchAdvisory(key) {
     const raw = [];
     walkAdvisory(j.records || j, '', 0, raw);
     const rain = raw
-      .filter(a => RAIN_PHENOM.test(a.kind))     // 風有颱風警報單在管,低溫高溫與站台無關
+      .filter(a => RAIN_PHENOM.test(a.kind))     // 風有颱風警報單在管,低溫高溫與站臺無關
       .filter(a => !a.end || a.end > now);       // 過期的擺著會讓人以為還在生效
     if (!rain.length) continue;
 
@@ -1304,7 +1324,7 @@ async function fetchAdvisory(key) {
 
 /* ── 中央氣象署 O-A0002-001 自動雨量站 ──────────────────────
    颱風真正致災的往往是雨,不是風。關機門檻看風,但值班的人要知道
-   現在雨下到什麼程度 —— 尤其山區站台,路先斷的機會比風吹壞設備高。   */
+   現在雨下到什麼程度 —— 尤其山區站臺,路先斷的機會比風吹壞設備高。   */
 let RAIN = [], RAIN_AT = 0;
 
 /* 中央氣象署的雨量分級定義（豪大雨特報標準）。
@@ -1377,7 +1397,7 @@ async function fetchRain(key) {
 }
 
 /* 最近的測站超過這個距離就不採用。
-   隔著一座山的測站量到的風,跟站台現場沒有關係,擺出來只會誤導。 */
+   隔著一座山的測站量到的風,跟站臺現場沒有關係,擺出來只會誤導。 */
 const OBS_MAX_KM = 60;
 
 function nearestIn(list, st) {
@@ -1444,7 +1464,7 @@ async function fetchWarningCWA(key) {
   return none;
 }
 
-/* ── 站台端靜態資料：由 GitHub Actions 在後端抓好並提交 ──────
+/* ── 站臺端靜態資料：由 GitHub Actions 在後端抓好並提交 ──────
    授權碼放在 repo 的 Secrets，使用者端不必申請、也不必填。
    這份 JSON 同源，會被 service worker 快取，離線時仍讀得到最後一次的內容。
    回傳 null 代表「這條路不可用」（檔案不存在或後端沒有金鑰），
@@ -1459,7 +1479,7 @@ async function fetchStatic() {
   return {
     updated: j.updated || '',
     warning: j.warning || null,
-    // 後端已依「距台灣遠近」排序，雙颱時排在前面的才是該優先看的那個。
+    // 後端已依「距臺灣遠近」排序，雙颱時排在前面的才是該優先看的那個。
     // t0 一定要是毫秒紀元：逐時內插直接用它算時間，缺了會整排變成 NaN。
     typhoons: (Array.isArray(j.typhoons) ? j.typhoons : []).map(t => ({
       ...t,
@@ -1583,7 +1603,7 @@ function windAt(snap, p) {
 }
 
 /* ═══ 警報預判 ═══════════════════════════════════════════
-   海上颱風警報：暴風範圍可能侵襲台灣或金馬 100 公里海域，約 24 小時前發布
+   海上颱風警報：暴風範圍可能侵襲臺灣或金馬 100 公里海域，約 24 小時前發布
    陸上颱風警報：暴風範圍可能侵襲陸地，約 18 小時前發布
    解除警報　：暴風範圍脫離上述範圍                           */
 function predictWarnings(series, seaBuf) {
@@ -1610,7 +1630,7 @@ function predictWarnings(series, seaBuf) {
   return { cpa, isTy, sea: wrap(seaIn, seaOut, 24), land: wrap(landIn, landOut, 18) };
 }
 
-/* ═══ 站台衝擊：何時該關、何時可復 ═══════════════════════ */
+/* ═══ 站臺衝擊：何時該關、何時可復 ═══════════════════════ */
 function stationImpact(series, st, cfg) {
   if (!Number.isFinite(st.lat) || !Number.isFinite(st.lng)) return null;
   const p = { lat: st.lat, lng: st.lng };
@@ -1637,7 +1657,7 @@ function stationImpact(series, st, cfg) {
   };
 }
 
-/* ═══ 站台當下建議 ═══════════════════════════════════════ */
+/* ═══ 站臺當下建議 ═══════════════════════════════════════ */
 function advise(st, imp, cfg) {
   const bf = imp ? imp.now.bf : null;
   if (st.status === 'on') {
@@ -1683,7 +1703,7 @@ async function loadTyphoon(manual) {
   const key = (DB.cfg.cwaKey || '').trim();
   let note = '';
   // 實測觀測跟颱風路徑是兩件事:就算氣象署現在沒有任何颱風,
-  // 「現在各站台幾級風」還是要看得到。所以先發出去,不等路徑的結果。
+  // 「現在各站臺幾級風」還是要看得到。所以先發出去,不等路徑的結果。
   const obsP = key
     ? Promise.allSettled([fetchObs(key), fetchRain(key), fetchAdvisory(key)])
         .then(([w, r, a]) => {
@@ -1697,7 +1717,7 @@ async function loadTyphoon(manual) {
       });
   try {
     let all = [];
-    // ① 站台端靜態資料：不需要任何人自備授權碼，優先用
+    // ① 站臺端靜態資料：不需要任何人自備授權碼，優先用
     const stat = await fetchStatic();
     await obsP;                       // 上面已經在跑了,這裡只是收線
     if (stat) {
@@ -1770,7 +1790,7 @@ function selectTyphoon(list, sel) {
   return list.find(t => sel && tyKey(t) === sel) || list[0];
 }
 
-/* 雙颱時切換要看哪一顆。整份推算（內插、警報時機、站台衝擊）全部跟著換，
+/* 雙颱時切換要看哪一顆。整份推算（內插、警報時機、站臺衝擊）全部跟著換，
    不只是換張圖 —— 選錯颱風做關機排程是會出事的。                        */
 function pickTyphoon(k) {
   const t = (DB.ty.list || []).find(x => tyKey(x) === k);
@@ -1782,11 +1802,11 @@ function pickTyphoon(k) {
   renderStations(); syncForm(); generate();
 }
 /* ═══════════════════════════════════════════════════════════════
-   介面：站台 / 颱風 / 回報 / 設定
+   介面：站臺 / 颱風 / 回報 / 設定
    ═══════════════════════════════════════════════════════════════ */
 const S_LABEL = { on: '開機', standby: '待機', off: '關機' };
 const S_VERB = { on: '完成開機', standby: '實施待機', off: '完成關機' };
-/* 站台卡上要的是「現在是什麼狀態」,不是「當時做了什麼動作」。
+/* 站臺卡上要的是「現在是什麼狀態」,不是「當時做了什麼動作」。
    還沒有颱風的時候寫「完成開機」,看起來像剛剛執行過復機作業,
    其實只是一直開著。S_VERB 留給回報稿用 —— 那裡本來就是在講動作。 */
 const S_STATE = { on: '開機中', standby: '待機中', off: '關機中' };
@@ -1807,7 +1827,7 @@ function bfBadge(bf, size) {
   return `<span class="bf ${size || 'md'}" style="background:${bfColor(bf)}"><b>${bf >= 17 ? '17+' : bf}</b><small>級</small></span>`;
 }
 
-/* ═══ 站台頁 ═══════════════════════════════════════════ */
+/* ═══ 站臺頁 ═══════════════════════════════════════════ */
 let fType = 'all', fStatus = 'all';
 
 function impactMap() {
@@ -1825,6 +1845,10 @@ function sortStations(list, imp) {
     time: (a, b) => b.at - a.at,
     timeAsc: (a, b) => a.at - b.at,
     name: (a, b) => a.name.localeCompare(b.name, 'zh-Hant'),
+    /* 由北至南：緯度大的在前。沒填座標的排在最後 ——
+       不知道在哪裡就不能假裝知道它在北邊還是南邊。 */
+    ns: (a, b) => (Number.isFinite(b.lat) ? b.lat : -1e3) - (Number.isFinite(a.lat) ? a.lat : -1e3)
+      || a.name.localeCompare(b.name, 'zh-Hant'),
     status: (a, b) => ({ off: 0, standby: 1, on: 2 })[a.status] - ({ off: 0, standby: 1, on: 2 })[b.status] || a.at - b.at,
     wind: (a, b) => ((imp[b.id]?.now.bf ?? -1) - (imp[a.id]?.now.bf ?? -1)),
     dist: (a, b) => ((imp[a.id]?.km ?? 1e9) - (imp[b.id]?.km ?? 1e9)),
@@ -1836,10 +1860,10 @@ function renderStations() {
   const box = $('#eqBody');
   if (!DB.stations.length) {
     box.innerHTML = `<div class="empty">${ICON.radar}
-      <b>尚未建立任何站台</b>
-      <p>本程式不內建任何單位或站台資料。請新增第一個站台，或把過去的回報文字整段貼上自動建檔。</p>
+      <b>尚未建立任何站臺</b>
+      <p>本程式不內建任何單位或站臺資料。請新增第一個站臺，或把過去的回報文字整段貼上自動建檔。</p>
       <div class="btnrow" style="max-width:20rem;margin:0 auto">
-        <button class="btn pri" onclick="openStation(null)">新增站台</button>
+        <button class="btn pri" onclick="openStation(null)">新增站臺</button>
         <button class="btn" onclick="go('rp')">貼上回報建檔</button>
       </div></div>`;
     $('#navDot').hidden = true; paintBfBar(null); return;
@@ -1875,7 +1899,7 @@ function renderStations() {
       : !SERIES ? '尚無颱風資料，無風力推估'
       : '未設座標，無風力推估'}</span></div>
 
-  <div class="sec"><h2>站台管制</h2><button class="act" onclick="openStation(null)">＋ 新增</button></div>
+  <div class="sec"><h2>站臺管制</h2><button class="act" onclick="openStation(null)">＋ 新增</button></div>
   <div class="chips">${typeChips}</div>
   <div class="chips">${stChips}
     <button class="chip" data-sortbtn aria-pressed="${DB.cfg.sort !== 'custom'}">排序：${SORT_LABEL[DB.cfg.sort] || '自訂'}</button></div>
@@ -1886,7 +1910,8 @@ function renderStations() {
   ${renderRail()}`;
 }
 const SORT_LABEL = {
-  custom: '自訂順序', type: '類別', time: '時間新到舊', timeAsc: '時間舊到新',
+  ns: '由北至南', custom: '自訂順序', type: '類別',
+  time: '時間新到舊', timeAsc: '時間舊到新',
   name: '名稱', status: '狀態', wind: '風級高到低', dist: '離颱風近到遠',
 };
 
@@ -1902,7 +1927,7 @@ function stationCard(s, imp, i, total) {
   // 否則看的人無從判斷這個數字能不能代表自己的現場。
   const ob = nearestObs(s), obf = obsBf(ob);
   if (obf != null) meta.push(`實測 ${bfLabel(obf)}　${esc(ob.o.name)} ${Math.round(ob.km)} km`);
-  // 颱風致災常常是雨先出事,山區站台尤其如此,所以雨量跟風擺在一起看。
+  // 颱風致災常常是雨先出事,山區站臺尤其如此,所以雨量跟風擺在一起看。
   const rb = nearestRain(s);
   if (rb && rb.o.h24 != null) {
     const L = rainLevel(rb.o);
@@ -2008,7 +2033,7 @@ function renderTyphoon(o) {
   const msg = $('#tyMsg'), body = $('#tyBody');
   const ty = DB.ty.data;
   if (o.loading) { msg.innerHTML = '<div class="msg i">查詢中…</div>'; return; }
-  if (o.error) { msg.innerHTML = `<div class="msg e">連線失敗：${esc(o.error)}。站台管制與回報產出不需要網路，可照常使用。</div>`; return; }
+  if (o.error) { msg.innerHTML = `<div class="msg e">連線失敗：${esc(o.error)}。站臺管制與回報產出不需要網路，可照常使用。</div>`; return; }
   if (o.none) {
     // 什麼都沒查到的時候,原因反而最該講出來 ——
     // 以前這裡把 note 丟掉,結果「氣象署沒發布」和「我們把資料解析壞了」
@@ -2024,7 +2049,7 @@ function renderTyphoon(o) {
     body.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 12c0-3 2.5-5 5.5-5S22 9 20 11c-3 3-8 1-8 1zM12 12c0 3-2.5 5-5.5 5S2 15 4 13c3-3 8-1 8-1z"/></svg>
       <b>尚未取得颱風資料</b>
-      <p>到設定填入中央氣象署授權碼後，即可取得官方路徑潛勢預報，並自動推算警報時機與各站台的關機、復機時間。</p>
+      <p>到設定填入中央氣象署授權碼後，即可取得官方路徑潛勢預報，並自動推算警報時機與各站臺的關機、復機時間。</p>
       <div class="btnrow" style="max-width:20rem;margin:0 auto">
         <button class="btn pri" onclick="loadTyphoon(true)">立即查詢</button>
         <button class="btn" onclick="go('cfg')">前往設定</button></div></div>`;
@@ -2056,7 +2081,7 @@ function renderTyphoon(o) {
     ['七級風半徑', ty.r15 ? ty.r15 + ' km' : '—'],
     ['移動', ty.mvDir ? `${dirZh(ty.mvDir)} ${ty.mvSpd || '—'} km/h` : '—'],
     ['中心位置', fmtCoordShort(ty.pos.lat, ty.pos.lng)],
-    ['距台灣', `${dTw} km · 台灣之${dirName(brg)}`],
+    ['距臺灣', `${dTw} km · 臺灣之${dirName(brg)}`],
   ];
   $('#tyPick').innerHTML = typhoonPicker();
   $('#tyBrief').innerHTML = advisoryCard() + briefCard();
@@ -2099,7 +2124,7 @@ function advisoryCard() {
     <div class="card pad" style="margin-bottom:0.75rem">${rows}</div>`;
 }
 
-/* 站台最近雨量站的累積雨量。24 小時是特報分級的主要依據,所以擺第一個。 */
+/* 站臺最近雨量站的累積雨量。24 小時是特報分級的主要依據,所以擺第一個。 */
 function rainCell(st) {
   const rb = nearestRain(st);
   if (!rb) return '<td><span style="color:var(--fg4)">—</span></td>';
@@ -2158,7 +2183,7 @@ function fmtDayTime(ts) {
 
 /* ── 氣象員播報 ────────────────────────────────────────────
    把距離、方位、強度、侵襲機率、最接近時間、豪大雨特報、
-   各站台實測與衝擊，串成一段可以直接唸、直接抄進通報的話。
+   各站臺實測與衝擊，串成一段可以直接唸、直接抄進通報的話。
    規則：官方數字（侵襲機率、特報、警報單、實測）與本機推估分開講，
    每一句都要說得出來源，不能讓聽的人分不清哪句是氣象署說的。      */
 function briefText() {
@@ -2205,7 +2230,7 @@ function briefText() {
     }
   }
 
-  // ── 站台衝擊 ──
+  // ── 站臺衝擊 ──
   const withXY = DB.stations.filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lng));
   let gaps = [];
   if (SERIES && withXY.length) {
@@ -2213,7 +2238,7 @@ function briefText() {
       .filter(r => r.i).sort((a, b) => b.i.peak.bf - a.i.peak.bf);
     if (rows.length) {
       L.push('');
-      L.push('站台衝擊（系統推估）');
+      L.push('站臺衝擊（系統推估）');
       for (const { x, i } of rows) {
         const ob = nearestObs(x), obf = obsBf(ob);
         L.push(`${IN}${x.name}：現場推估 ${i.now.bf} 級` +
@@ -2327,7 +2352,7 @@ function warningCard() {
     const ty0 = DB.ty.data;
     const cpa = WARN.cpa
       ? `<div class="warnrow"><div class="wi" style="background:#EF5B4C22;color:#EF5B4C">🎯</div>
-         <div class="wt"><b>中心最接近</b><small>距台灣最近約 ${Math.round(WARN.cpa.d)} 公里</small></div>
+         <div class="wt"><b>中心最接近</b><small>距臺灣最近約 ${Math.round(WARN.cpa.d)} 公里</small></div>
          <div class="wv" style="color:#EF5B4C">${fmtWhen(WARN.cpa.t)}
          <br><span style="color:var(--fg4);font-weight:400">${fmtShort(WARN.cpa.t)}　${relative(WARN.cpa.t)}</span></div></div>`
       : '';
@@ -2365,7 +2390,7 @@ function warningCard() {
     + exNote + '<div class="card" style="margin-bottom:0.75rem">';
   html += row('🌊', '#54C7EA', '海上颱風警報', s.sub, s.val);
   html += row('🏝', '#EFAA35', '陸上颱風警報', l.sub, l.val);
-  html += row('🎯', '#EF5B4C', '中心最接近', WARN.cpa ? `距台灣最近約 ${Math.round(WARN.cpa.d)} 公里` : '—',
+  html += row('🎯', '#EF5B4C', '中心最接近', WARN.cpa ? `距臺灣最近約 ${Math.round(WARN.cpa.d)} 公里` : '—',
     WARN.cpa ? two(WARN.cpa.t) : '—');
   html += row('✅', '#3ECB92', '預估解除警報', WARN.sea ? '暴風範圍完全脫離近海之後' : '—',
     WARN.sea ? two(WARN.sea.clear) : '—');
@@ -2376,7 +2401,7 @@ function warningCard() {
 
 /* ── 時間軸 ────────────────────────────────────────────────
    逐時內插序列本來就算好了,只差一個介面。
-   排班的人最想知道的是「我交接的那個時刻,各站台是幾級風」,
+   排班的人最想知道的是「我交接的那個時刻,各站臺是幾級風」,
    拖到那一格看一眼就有答案,不必自己從尖峰時間反推。            */
 let TCUR = 0, TMARK = null;
 
@@ -2390,7 +2415,7 @@ function timelineCard() {
       oninput="onTimeline(this.value)" aria-label="預報時刻">
     <div id="tlOut">${timelineOut()}</div>
     <span class="sub" style="display:block;margin-top:0.375rem">
-      拖到交接時刻，看那時各站台幾級風。${EXTRAP ? '外推推估，越遠越不可信。' : ''}</span>
+      拖到交接時刻，看那時各站臺幾級風。${EXTRAP ? '外推推估，越遠越不可信。' : ''}</span>
   </div>`;
 }
 
@@ -2403,7 +2428,7 @@ function timelineOut() {
     <span style="font-family:var(--mono);font-size:0.8125rem;color:var(--acc)">${TCUR === 0
       ? fmtShort(s.t) : '+' + s.h + ' 小時後'}</span>
     <span class="pill" style="background:${bfColor(bf)}">${bf} 級</span>
-    <span style="font-size:0.8125rem;color:var(--fg3)">距台灣 ${d} km</span></div>`;
+    <span style="font-size:0.8125rem;color:var(--fg3)">距臺灣 ${d} km</span></div>`;
 
   const withXY = DB.stations.filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lng));
   if (!withXY.length) return head;
@@ -2475,16 +2500,16 @@ function renderImpact() {
   if (!SERIES) { box.innerHTML = ''; return; }
   const withXY = DB.stations.filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
   if (!withXY.length) {
-    box.innerHTML = `<div class="sec"><h2>站台衝擊預判</h2></div>
-      <div class="msg i">尚無站台填寫座標。到設定或站台編輯中填入座標後，這裡會逐站列出目前風級、尖峰風級、應完成關機時間與預估可復機時間。座標支援度分秒、十進位、海圖式等多種寫法。</div>`;
+    box.innerHTML = `<div class="sec"><h2>站臺衝擊預判</h2></div>
+      <div class="msg i">尚無站臺填寫座標。到設定或站臺編輯中填入座標後，這裡會逐站列出目前風級、尖峰風級、應完成關機時間與預估可復機時間。座標支援度分秒、十進位、海圖式等多種寫法。</div>`;
     return;
   }
   const rows = withXY.map(s => ({ s, i: stationImpact(SERIES, s, DB.cfg) }))
     .sort((a, b) => (b.i.peak.bf - a.i.peak.bf) || (a.i.km - b.i.km));
-  box.innerHTML = `<div class="sec"><h2>站台衝擊預判</h2></div>
+  box.innerHTML = `<div class="sec"><h2>站臺衝擊預判</h2></div>
   <div class="card" style="padding:0.25rem 0.625rem;margin-bottom:0.375rem;overflow-x:auto">
    <table class="impact wide"><tr>
-     <th>站台</th><th>目前推估</th><th>實測</th><th>雨量</th><th>尖峰</th><th>應完成關機</th><th>預估可復機</th></tr>
+     <th>站臺</th><th>目前推估</th><th>實測</th><th>雨量</th><th>尖峰</th><th>應完成關機</th><th>預估可復機</th></tr>
    ${rows.map(({ s, i }) => `<tr>
      <td class="nm">${esc(s.name)}<br><span style="font-family:var(--mono);font-size:0.6875rem;color:var(--fg4)">${i.km} km</span></td>
      <td><span class="pill" style="background:${bfColor(i.now.bf)}">${i.now.bf}</span></td>
@@ -2545,7 +2570,7 @@ function renderForecast() {
     與速度（${Math.round(ty.mvSpd)} km/h）直線前進</b>算出來的，強度沿用現值、不預測增強減弱。
     颱風不會這樣走，時距越遠誤差越大。請以中央氣象署發布的警報單為準。</div>` : ''}
   <div class="card" style="padding:0.25rem 0.625rem;overflow-x:auto"><table class="impact">
-    <tr><th>時刻</th><th>中心位置</th><th>近中心風</th><th>距台灣</th><th>${EXTRAP ? '性質' : '70%機率半徑'}</th></tr>
+    <tr><th>時刻</th><th>中心位置</th><th>近中心風</th><th>距臺灣</th><th>${EXTRAP ? '性質' : '70%機率半徑'}</th></tr>
     ${TRACK.map(f => {
       const bf = ms2bf(f.vmax), d = Math.round(distToTaiwan(f.pos));
       // 幾點鐘擺前面、時距擺後面 —— 排班要的是「幾點」,不必自己加減。
@@ -2669,7 +2694,7 @@ function drawMap(ty) {
     return L.polyline(latlngs, opt).addTo(MLAYER);
   };
 
-  // ── 台灣近海界線：海上颱風警報的門檻 ──────────────────────
+  // ── 臺灣近海界線：海上颱風警報的門檻 ──────────────────────
   // 墊在最底層。暴風圈碰到這條線,就是氣象署發海警的條件。
   const seaKm = Number.isFinite(DB.cfg.seaBuffer) ? DB.cfg.seaBuffer : 100;
   if (seaKm > 0) {
@@ -2682,7 +2707,7 @@ function drawMap(ty) {
   // ── 其他同時活動的颱風：琥珀色、輕量、可點選切換 ──────────
   // 先畫,讓選中的那顆疊在最上層。
   // 一併納入 fitBounds:多颱時要能一眼看到全部幾顆在哪裡,
-  // 代價是台灣會縮小一點 —— station 標記仍然畫著,要看細節就點選擇列切換,
+  // 代價是臺灣會縮小一點 —— station 標記仍然畫著,要看細節就點選擇列切換,
   // 切過去之後這顆就變成主要颱風,框選也會跟著收斂。
   (DB.ty.list || []).forEach(o => {
     if (!o || !o.pos || tyKey(o) === tyKey(ty)) return;
@@ -2754,7 +2779,7 @@ function drawMap(ty) {
   });
   /* 切到颱風頁的當下 #map 可能還沒有尺寸（剛從 display:none 出來）,
      這時候 fitBounds 會拿 0×0 去算縮放,結果縮到 zoom 0 ——
-     整個世界擠成一團,颱風跟站台全部疊在畫面中央。
+     整個世界擠成一團,颱風跟站臺全部疊在畫面中央。
      所以要先 invalidateSize 讓 Leaflet 量到真正的大小,再 fitBounds。 */
   const fit = () => {
     const good = pts.filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
@@ -2788,8 +2813,13 @@ function generate() {
   const c = DB.cfg;
   const head = tglOn('#optHead') && c.unit ? `${c.unit}報告：\n` : '';
   const since = DB.since || 0;
-  const inType = id => DB.stations.filter(s => s.type === id).sort((a, b) => a.at - b.at);
-  const back = DB.stations.filter(s => s.status === 'on' && s.at >= since).sort((a, b) => a.at - b.at);
+  /* 回報稿裡每個區塊都由北至南列。原本是照狀態變更時間排,
+     但通報是給人照地理位置對照的,時間順序在紙上看不出任何意義。
+     沒填座標的排在最後,同緯度或都沒座標時才回到時間先後。 */
+  const nsAt = (a, b) => (Number.isFinite(b.lat) ? b.lat : -1e3) - (Number.isFinite(a.lat) ? a.lat : -1e3)
+    || a.at - b.at;
+  const inType = id => DB.stations.filter(s => s.type === id).sort(nsAt);
+  const back = DB.stations.filter(s => s.status === 'on' && s.at >= since).sort(nsAt);
   const bs = [];
   let txt = '';
 
@@ -2797,11 +2827,11 @@ function generate() {
     const intro = (c.introA || '').replace('{颱風}', DB.ty.name || '（颱風名稱）');
     DB.types.forEach(t => {
       const items = inType(t.id).filter(s => s.status !== 'on')
-        .sort((a, b) => (a.status === 'standby') - (b.status === 'standby') || a.at - b.at)
+        .sort((a, b) => (a.status === 'standby') - (b.status === 'standby') || nsAt(a, b))
         .map(s => repLine(s, opt));
       if (items.length || opt.empty) bs.push(blk(`${t.report}${items.length}處：`, items, opt));
     });
-    bs.push(blk(`已復機站台${back.length}處：`, back.map(s => repLine(s, opt)), opt));
+    bs.push(blk(`已復機站臺${back.length}處：`, back.map(s => repLine(s, opt)), opt));
     bs.push({ title: c.endA, body: '', n: 1 });
     txt = head + intro + '\n' + joinBlocks(bs, opt);
   } else {
@@ -2809,17 +2839,17 @@ function generate() {
       const off = inType(t.id).filter(s => s.status === 'off');
       if (off.length) bs.push(blk(`尚未開機${t.report}計${off.length}處：`, off.map(s => repLine(s, opt)), opt));
     });
-    if (!bs.length && opt.empty) bs.push(blk('尚未開機站台計0處：', [], opt));
-    bs.push(blk(`已復機站台${back.length}處：`, back.map(s => repLine(s, opt)), opt));
-    const sb = DB.stations.filter(s => s.status === 'standby').sort((a, b) => a.at - b.at);
-    if (sb.length || opt.empty) bs.push(blk(`待機站台計${sb.length}處：`, sb.map(s => repLine(s, opt)), opt));
+    if (!bs.length && opt.empty) bs.push(blk('尚未開機站臺計0處：', [], opt));
+    bs.push(blk(`已復機站臺${back.length}處：`, back.map(s => repLine(s, opt)), opt));
+    const sb = DB.stations.filter(s => s.status === 'standby').sort(nsAt);
+    if (sb.length || opt.empty) bs.push(blk(`待機站臺計${sb.length}處：`, sb.map(s => repLine(s, opt)), opt));
     bs.push({ title: c.endB, body: '', n: 1 });
     txt = head + joinBlocks(bs, opt);
   }
   $('#out').value = txt;
 }
 
-/* ── 反向彙整：把既有回報文字解析回站台資料 ─────────────
+/* ── 反向彙整：把既有回報文字解析回站臺資料 ─────────────
    兩段式：先 parseReport 產生比對結果供預覽，確認後才 applyReport 寫入。
    直接覆蓋會在貼錯內容時把整個管制盤蓋掉，所以中間一定要有確認關卡。 */
 const HDR_RE = /^\s*[一二三四五六七八九十]\s*[、.．]\s*(.+?)(?:計)?\s*\d*\s*處/;
@@ -2843,7 +2873,7 @@ function parseReport(text) {
       const t = DB.types.find(x =>
         title.includes(x.report) || title.includes(x.label) ||
         x.report.includes(title) || x.label.includes(title));
-      // 「已復機站台」「待機站台」這類區塊沒有指明設備類別，沿用上一個區塊，
+      // 「已復機站臺」「待機站臺」這類區塊沒有指明設備類別，沿用上一個區塊，
       // 但標記為不確定，之後同名合併時以有指明類別的那筆為準。
       typeSure = !!t;
       if (t) curType = t.id;
@@ -2868,8 +2898,8 @@ function parseReport(text) {
     raw_rows.push({ name, type: curType, typeSure, status, at, hum });
   }
 
-  // 同一份文字裡同名站台可能出現兩次（例如先列關機、後列已復機）。
-  // 直接照單全收會建出重複站台，因此以名稱合併：狀態時間取最新的一筆，
+  // 同一份文字裡同名站臺可能出現兩次（例如先列關機、後列已復機）。
+  // 直接照單全收會建出重複站臺，因此以名稱合併：狀態時間取最新的一筆，
   // 類別取「區塊標題有明確指出類別」的那一筆。
   const byName = new Map();
   let merged = 0;
@@ -2921,12 +2951,12 @@ function applyReport(rows) {
 function openImportPreview(text) {
   const { rows, skipped, merged } = parseReport(text);
   if (!rows.length) {
-    openSheet('解析結果', `<div class="msg e">沒有解析到任何站台。</div>
+    openSheet('解析結果', `<div class="msg e">沒有解析到任何站臺。</div>
       <p class="hint">可辨識的句型是：<code>1.○○雷達站於1310時完成關機（7月10日）。</code><br><br>
       動詞支援完成關機、實施關機、完成開機、完成復機、實施待機、完成待機；
       時間可寫 <code>15時</code> 或 <code>1310時</code>；濕度寫在同一行的
       <code>（濕度87%）</code> 也會一併帶入。區塊標題如
-      <code>一、岸際雷達11處：</code> 用來判斷新站台歸到哪個類別。</p>`);
+      <code>一、岸際雷達11處：</code> 用來判斷新站臺歸到哪個類別。</p>`);
     return;
   }
   const KIND = {
@@ -2937,15 +2967,15 @@ function openImportPreview(text) {
 
   openSheet('確認要套用的內容', `
     <div class="stat" style="margin-bottom:0.75rem">
-      <div class="v-on"><b>${n.new}</b><small>新增站台</small></div>
+      <div class="v-on"><b>${n.new}</b><small>新增站臺</small></div>
       <div class="v-sb"><b>${n.update}</b><small>狀態更新</small></div>
       <div><b style="color:var(--fg4)">${n.same}</b><small>無變更</small></div>
     </div>
-    ${skipped ? `<div class="msg w">有 ${skipped} 行看起來像站台紀錄但格式不合，已略過。請比對下表確認沒有漏掉。</div>` : ''}
-    ${merged ? `<div class="msg i">有 ${merged} 個站台在這份文字裡出現超過一次（例如先列關機、後列已復機），已合併為最新的一筆狀態。</div>` : ''}
-    ${rows.some(r => r.kind === 'new' && !r.typeSure) ? `<div class="msg w">部分新站台所在的區塊沒有指明設備類別，已暫時歸到最接近的類別，套用後請確認下表的類別欄。</div>` : ''}
+    ${skipped ? `<div class="msg w">有 ${skipped} 行看起來像站臺紀錄但格式不合，已略過。請比對下表確認沒有漏掉。</div>` : ''}
+    ${merged ? `<div class="msg i">有 ${merged} 個站臺在這份文字裡出現超過一次（例如先列關機、後列已復機），已合併為最新的一筆狀態。</div>` : ''}
+    ${rows.some(r => r.kind === 'new' && !r.typeSure) ? `<div class="msg w">部分新站臺所在的區塊沒有指明設備類別，已暫時歸到最接近的類別，套用後請確認下表的類別欄。</div>` : ''}
     <div class="card" style="padding:0.25rem 0.625rem;margin-bottom:0.75rem;max-height:46vh;overflow-y:auto">
-      <table class="impact"><tr><th>站台</th><th>類別</th><th>解析結果</th><th>異動</th></tr>
+      <table class="impact"><tr><th>站臺</th><th>類別</th><th>解析結果</th><th>異動</th></tr>
       ${rows.map(r => `<tr>
         <td class="nm">${esc(r.name)}</td>
         <td style="font-size:0.7188rem;color:${r.typeSure ? 'var(--fg3)' : 'var(--sb)'}">${esc(typeOf(r.type).label)}${r.typeSure ? '' : ' ?'}</td>
@@ -2959,8 +2989,8 @@ function openImportPreview(text) {
       <button class="btn pri" id="ip_ok">套用到管制盤</button>
       <button class="btn" id="ip_no">取消</button></div>
     <p class="hint" style="margin-top:0.625rem">
-      比對依據是站台名稱完全相同。名稱有一個字不一樣就會被當成新站台，
-      套用後若看到重複，請到該站「編輯」改名或刪除。新站台的座標需另外補填。</p>`,
+      比對依據是站臺名稱完全相同。名稱有一個字不一樣就會被當成新站臺，
+      套用後若看到重複，請到該站「編輯」改名或刪除。新站臺的座標需另外補填。</p>`,
     () => {
       $('#ip_ok').onclick = () => { applyReport(rows); closeSheet(); };
       $('#ip_no').onclick = closeSheet;
@@ -2993,11 +3023,11 @@ $('#shClose').onclick = closeSheet;
 $('.sheet-bg').onclick = closeSheet;
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
 
-/* ── 站台編輯 ────────────────────────────────────────── */
+/* ── 站臺編輯 ────────────────────────────────────────── */
 function openStation(id) {
   const s = id ? DB.stations.find(x => x.id === id) : null;
   const opts = DB.types.map(t => `<option value="${t.id}" ${s && s.type === t.id ? 'selected' : ''}>${esc(t.label)}</option>`).join('');
-  openSheet(s ? '編輯站台' : '新增站台', `
+  openSheet(s ? '編輯站臺' : '新增站臺', `
     <label class="fld"><span class="lb">回報名稱</span>
       <input type="text" id="f_name" value="${esc(s ? s.name : '')}" placeholder="例：○○雷達站">
       <span class="sub">產出回報文字時會原字照用，請填成正式回報要出現的寫法。</span></label>
@@ -3043,7 +3073,7 @@ function openStation(id) {
       };
       $('#f_save').onclick = () => {
         const name = $('#f_name').value.trim();
-        if (!name) return toast('請填站台名稱');
+        if (!name) return toast('請填站臺名稱');
         const llv = $('#f_ll').value.trim();
         const c = llv ? parseCoord(llv) : null;
         if (llv && !c) return toast('座標格式無法辨識，請修正或清空');
@@ -3069,10 +3099,12 @@ function openStation(id) {
 
 /* ── 排序 ────────────────────────────────────────────── */
 function openSort() {
-  openSheet('站台排序', Object.entries(SORT_LABEL).map(([k, v]) =>
+  openSheet('站臺排序', Object.entries(SORT_LABEL).map(([k, v]) =>
     `<button class="btn wide" data-sort="${k}" style="margin-bottom:0.5rem;justify-content:flex-start;
       ${DB.cfg.sort === k ? 'border-color:var(--acc);color:var(--acc);background:var(--acc-d)' : ''}">${v}</button>`).join('') +
-    '<p class="hint">選「自訂順序」時，每張站台卡右側會出現上下箭頭，可自行調整成與回報稿相同的順序。</p>',
+    '<p class="hint">預設為「由北至南」，依站臺座標的緯度排列，'
+    + '未填座標的排在最後。選「自訂順序」時，每張站臺卡右側會出現上下箭頭，'
+    + '可自行調整成與回報稿相同的順序。</p>',
     () => {
       $('#shBody').addEventListener('click', e => {
         const b = e.target.closest('[data-sort]'); if (!b) return;
@@ -3091,7 +3123,7 @@ function openTypes() {
     <button class="btn sm dg" data-del="${t.id}">刪除此類別</button></div>`).join('');
   openSheet('設備類別', rows + `
     <div class="btnrow"><button class="btn pri wide" id="t_add">新增類別</button></div>
-    <p class="hint" style="margin-top:0.75rem">類別完全由您自訂，程式不預設任何實際設備名稱。刪除類別前，請先把該類別下的站台改到其他類別。</p>`,
+    <p class="hint" style="margin-top:0.75rem">類別完全由您自訂，程式不預設任何實際設備名稱。刪除類別前，請先把該類別下的站臺改到其他類別。</p>`,
     () => {
       $('#shBody').addEventListener('input', e => {
         const el = e.target.closest('[data-t]'); if (!el) return;
@@ -3102,7 +3134,7 @@ function openTypes() {
         const d = e.target.closest('[data-del]');
         if (d) {
           const used = DB.stations.filter(s => s.type === d.dataset.del).length;
-          if (used) return toast(`還有 ${used} 個站台屬於此類別，請先改到其他類別`);
+          if (used) return toast(`還有 ${used} 個站臺屬於此類別，請先改到其他類別`);
           if (DB.types.length <= 1) return toast('至少需保留一個類別');
           DB.types = DB.types.filter(x => x.id !== d.dataset.del); save(); openTypes(); renderStations();
         }
@@ -3151,7 +3183,7 @@ function renderSettings() {
   <div class="sec"><h2>管制門檻</h2></div>
   <div class="card pad" style="margin-bottom:1.125rem">
     <label class="fld"><span class="lb">建議關機風級</span>${bfSel('c_bfShut', c.bfShut)}
-      <span class="sub">預估現場風力達此級數時，站台卡會提示應完成關機。</span></label>
+      <span class="sub">預估現場風力達此級數時，站臺卡會提示應完成關機。</span></label>
     <label class="fld"><span class="lb">緊急關機風級</span>${bfSel('c_bfEmerg', c.bfEmerg)}
       <span class="sub">達此級數時改以紅色警示，視為應立即關機。</span></label>
     <label class="fld"><span class="lb">可復機風級上限</span>${bfSel('c_bfResume', c.bfResume)}
@@ -3169,11 +3201,11 @@ function renderSettings() {
       <span class="sub">暴風範圍進入海岸線外此距離內，視為將發布海上颱風警報。</span></label>
   </div>
 
-  <div class="sec"><h2>設備與站台</h2></div>
+  <div class="sec"><h2>設備與站臺</h2></div>
   <div class="card pad" style="margin-bottom:1.125rem">
     <div class="sw"><div class="sw-t"><b>設備類別</b><small>目前 ${DB.types.length} 類，可自行新增或改名</small></div>
       <button class="btn sm" onclick="openTypes()">管理</button></div>
-    <div class="sw"><div class="sw-t"><b>站台清單</b>
+    <div class="sw"><div class="sw-t"><b>站臺清單</b>
       <small>共 ${DB.stations.length} 站，其中 ${DB.stations.filter(s => Number.isFinite(s.lat)).length} 站已填座標</small></div>
       <button class="btn sm" onclick="openStation(null)">新增</button></div>
     ${DB.stations.length ? `<div style="margin-top:0.625rem">${DB.stations.map(s =>
@@ -3186,13 +3218,13 @@ function renderSettings() {
   <div class="sec"><h2>資料與安全</h2></div>
   <div class="card pad" style="margin-bottom:1.125rem">
     <div class="sw"><div class="sw-t"><b>開啟密碼</b>
-      <small>${c.pin ? '已設定。開啟程式需輸入密碼' : '未設定。任何拿到裝置的人都能看到站台與座標'}</small></div>
+      <small>${c.pin ? '已設定。開啟程式需輸入密碼' : '未設定。任何拿到裝置的人都能看到站臺與座標'}</small></div>
       <button class="btn sm" onclick="openPin()">${c.pin ? '變更' : '設定'}</button></div>
     <div class="sw"><div class="sw-t"><b>閒置自動鎖定</b><small>離開畫面超過設定時間即需重新輸入密碼</small></div>
       <select id="c_lock" style="width:6.875rem">
         ${[[0, '不鎖定'], [1, '1 分鐘'], [5, '5 分鐘'], [15, '15 分鐘'], [30, '30 分鐘']]
       .map(([v, l]) => `<option value="${v}" ${c.lockMin === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-    <div class="sw"><div class="sw-t"><b>備份含座標</b><small>關閉後，匯出的備份不含任何站台座標</small></div>
+    <div class="sw"><div class="sw-t"><b>備份含座標</b><small>關閉後，匯出的備份不含任何站臺座標</small></div>
       <button class="tgl" id="c_expc" aria-pressed="${c.exportCoords}"></button></div>
     <div class="btnrow" style="margin-top:0.875rem">
       <button class="btn" id="c_exp">匯出備份</button>
@@ -3221,7 +3253,7 @@ function renderSettings() {
   <div class="card pad">
     <p class="hint">
       <b style="color:var(--fg2)">風哨 GALEPOST</b> — 颱風期間岸際設備開關待機管制。<br><br>
-      單檔離線程式。所有資料只寫入本機瀏覽器儲存空間，不上傳、不同步、不含任何預設的單位或站台資料。
+      單檔離線程式。所有資料只寫入本機瀏覽器儲存空間，不上傳、不同步、不含任何預設的單位或站臺資料。
       颱風資料僅在您按下更新時，才向中央氣象署或 GDACS 發出查詢。<br><br>
       關機、復機與警報時機皆為模型推估，供先期作業參考。正式研判請以中央氣象署警報單與單位規定為準。
     </p>
@@ -3248,7 +3280,7 @@ function renderSettings() {
   $('#c_imp').onclick = () => $('#c_file').click();
   $('#c_file').onchange = doImport;
   $('#c_wipe').onclick = () => {
-    if (!confirm('清除本機全部資料，包含所有站台、座標、設定與日誌。此動作無法復原，確定？')) return;
+    if (!confirm('清除本機全部資料，包含所有站臺、座標、設定與日誌。此動作無法復原，確定？')) return;
     if (!confirm('再次確認：已經匯出備份了嗎？')) return;
     localStorage.removeItem(KEY); location.reload();
   };
@@ -3386,7 +3418,7 @@ $('#tyName').addEventListener('input', () => {
   save(); generate();
 });
 $('#since').addEventListener('change', () => { DB.since = fromInput($('#since').value); save(); generate(); });
-$('#regen').onclick = () => { generate(); toast('已依目前站台狀態重新產生'); };
+$('#regen').onclick = () => { generate(); toast('已依目前站臺狀態重新產生'); };
 $('#markSent').onclick = () => {
   DB.since = Date.now(); $('#since').value = toInput(DB.since); save(); generate();
   toast('起算時間已推進到現在');
@@ -3451,7 +3483,7 @@ async function checkUpdate() {
 
 /* ── 颱風頁的子頁籤 ────────────────────────────────────────
    整頁攤開要滑很久,而值班的人一次只問一件事:
-   現在怎樣（概況）、往哪走（路徑）、我的站台會怎樣（站台）、
+   現在怎樣（概況）、往哪走（路徑）、我的站臺會怎樣（站臺）、
    要怎麼寫（播報）、外面實際在下什麼（實況）。
    選的分頁會記住 —— 每次進來都要重點一次很煩。              */
 const TYSUB_KEY = 'galepost.ui.tysub';
@@ -3552,7 +3584,7 @@ window.checkUpdate = checkUpdate;
 
   /* ── 字級 ───────────────────────────────────────────────────
      存在自己的 key,不進 DB —— 字級是這台裝置的偏好,
-     不該跟著站台資料被匯出、也不該被別台的備份蓋掉。 */
+     不該跟著站臺資料被匯出、也不該被別台的備份蓋掉。 */
   const TS_KEY = 'galepost.ui.ts';
   const TS = [
     ['s', '小'], ['m', '中'], ['l', '大'], ['xl', '特大'],
@@ -3607,7 +3639,7 @@ window.checkUpdate = checkUpdate;
        </div>` +
       '<span class="sub" style="display:block;margin-top:0.5rem">' +
       '為了颱風天離線可用，程式本體是「快取優先」——裝過一次之後，' +
-      '就算站台已經更新，手機上仍可能是舊版，而且畫面上看不出來。' +
+      '就算站臺已經更新，手機上仍可能是舊版，而且畫面上看不出來。' +
       '新版預設不會在你操作到一半時自動抽換（颱風天尤其不該），' +
       '要換版請按這顆按鈕。</span></div>';
     // 顯示 service worker 實際掛著的狀態,跟上面的版本號對照才知道是不是舊的
@@ -3659,8 +3691,8 @@ window.checkUpdate = checkUpdate;
   ];
   let windyOv = 'radar';
 
-  /* 對焦位置:站台或颱風。
-     預設仍是站台 —— 值班最常問的是「自家設備頭上在下什麼」,
+  /* 對焦位置:站臺或颱風。
+     預設仍是站臺 —— 值班最常問的是「自家設備頭上在下什麼」,
      不是颱風中心那片海。但要看颱風本體的雲系與環流時,
      切到颱風才對得上,所以兩個都留,並記住上次的選擇。      */
   const WINDY_FOCUS_KEY = 'galepost.ui.windyfocus';
@@ -3679,8 +3711,8 @@ window.checkUpdate = checkUpdate;
       // 颱風可能還在幾百公里外,拉遠一級才看得到整個環流
       if (p) return { lat: p.lat, lng: p.lng, zoom: 5 };
     }
-    // 以自己的站台為中心最有用 —— 要看的是自家設備頭上在下什麼,
-    // 不是颱風中心那片海。沒有站台座標才退回台灣中心。
+    // 以自己的站臺為中心最有用 —— 要看的是自家設備頭上在下什麼,
+    // 不是颱風中心那片海。沒有站臺座標才退回臺灣中心。
     const pts = (typeof DB !== 'undefined' ? DB.stations : [])
       .filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
     if (pts.length) {
@@ -3718,7 +3750,7 @@ window.checkUpdate = checkUpdate;
     const canTy = !!typhoonCenter();
     const focusSeg = canTy
       ? '<div class="seg" id="wyFo" style="margin-top:0.375rem">'
-        + [['station', '對焦站台'], ['typhoon', '對焦颱風']].map(([f, l]) =>
+        + [['station', '對焦站臺'], ['typhoon', '對焦颱風']].map(([f, l]) =>
             `<button type="button" data-fo="${f}" aria-pressed="${windyFocus === f}">${l}</button>`
           ).join('') + '</div>'
       : '';
@@ -3774,7 +3806,7 @@ window.checkUpdate = checkUpdate;
     if (!frame) return;
     if (!navigator.onLine) {
       frame.innerHTML = '<div class="ph">目前離線，無法載入 Windy 即時影像。<br>' +
-        '站台管制與回報產出不受影響。</div>';
+        '站臺管制與回報產出不受影響。</div>';
       _windySrc = '';                  // 恢復連線後要重新掛回來
       return;
     }
@@ -3861,7 +3893,7 @@ window.checkUpdate = checkUpdate;
   });
 
   /* ── 分頁深連結 ────────────────────────────────────────────
-     manifest 的捷徑(長按圖示 → 站台 / 回報)靠 #eq、#rp 指定開哪一頁。 */
+     manifest 的捷徑(長按圖示 → 站臺 / 回報)靠 #eq、#rp 指定開哪一頁。 */
   const PANES = ['ty', 'eq', 'rp', 'cfg'];
   function fromHash() {
     const p = (location.hash || '').replace(/^#/, '');
@@ -3886,7 +3918,7 @@ window.checkUpdate = checkUpdate;
   }
   function offlineCheck() {
     if (!navigator.onLine) {
-      show('warn', '目前離線', tyAge() + ',站台管制與回報不受影響。', '', null);
+      show('warn', '目前離線', tyAge() + ',站臺管制與回報不受影響。', '', null);
     } else if (bar.classList.contains('warn')) {
       hide();
     }
