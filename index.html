@@ -589,10 +589,14 @@ function blankDB() {
   return {
     v: 2,
     stations: [],
+    /* terrain：停班停課雨量基準看的是平地還是山區（平地 350 / 山區 200 mm）。
+       雷達與紅外線都架在岸際、港區,一律平地。
+       noReport：不列入回報稿。中繼站臺是自用監看,不進交接通報。 */
     types: [
-      { id: 't1', label: '岸際雷達',   report: '岸際雷達' },
-      { id: 't2', label: '港區雷達站', report: '港區雷達站' },
-      { id: 't3', label: '紅外線熱影像', report: '紅外線熱影像系統' },
+      { id: 't1', label: '岸際雷達',   report: '岸際雷達',       terrain: 'flat', noReport: false },
+      { id: 't2', label: '港區雷達站', report: '港區雷達站',     terrain: 'flat', noReport: false },
+      { id: 't3', label: '紅外線熱影像', report: '紅外線熱影像系統', terrain: 'flat', noReport: false },
+      { id: 't4', label: '中繼站臺',   report: '中繼站臺',       terrain: 'hill', noReport: true  },
     ],
     log: [],
     // list：本次取得的所有熱帶氣旋（雙颱時不只一顆）；sel：使用者選的那顆的識別碼
@@ -606,7 +610,7 @@ function blankDB() {
       bfShut: 8, bfEmerg: 10, bfResume: 6, humMax: 70, leadMin: 60,
       sort: 'ns', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
     },
-    since: 0, tpl: 'A', nsMigrated: true,
+    since: 0, tpl: 'A', nsMigrated: true, terrMigrated: true,
   };
 }
 
@@ -635,6 +639,20 @@ let DB = blankDB();
        沒有被動到 —— 切回「自訂順序」原本的排法就回來了。 */
     // 旗標要看「存進去的那份」有沒有,不能看合併後的 DB ——
     // blankDB() 已經帶 nsMigrated:true,合併後永遠是 true,遷移就永遠不會跑。
+    /* 類別加了 terrain（平地／山區）與 noReport（不列入回報）,舊存檔沒有這兩個鍵。
+       沒有 terrain 就當平地 —— 雷達站都在岸際、港區。
+       中繼站臺是這一版新增的類別,舊存檔裡沒有,補上去；已經有同名的就不重複加。 */
+    if (!o.terrMigrated) {
+      DB.types.forEach(t => {
+        if (t.terrain !== 'hill' && t.terrain !== 'flat') t.terrain = 'flat';
+        if (typeof t.noReport !== 'boolean') t.noReport = false;
+      });
+      if (!DB.types.some(t => t.label === '中繼站臺' || t.report === '中繼站臺')) {
+        DB.types.push({ id: uid(), label: '中繼站臺', report: '中繼站臺', terrain: 'hill', noReport: true });
+      }
+      DB.terrMigrated = true;
+      setTimeout(save, 0);
+    }
     if (!o.nsMigrated) {
       if (DB.cfg.sort === 'custom') DB.cfg.sort = 'ns';
       DB.nsMigrated = true;
@@ -938,7 +956,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v16';
+const APP_VER = 'v17';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1347,9 +1365,31 @@ const RAIN_LEVELS = [
    ② 達標不等於一定停班停課 —— 決定權在地方政府,還要看有沒有致災。
    所以標的是「已達參考基準」,不是「將停班停課」。            */
 const DGPA_HILL = 200, DGPA_FLAT = 350;
-const dgpaMark = h24 => h24 == null ? null
-  : h24 >= DGPA_FLAT ? { t: '已達平地基準', col: '#B0186B' }
-  : h24 >= DGPA_HILL ? { t: '已達山區基準', col: '#EF5B4C' } : null;
+const TERRAIN = {
+  flat: { label: '平地', thr: DGPA_FLAT, col: '#B0186B' },
+  hill: { label: '山區', thr: DGPA_HILL, col: '#EF5B4C' },
+};
+
+/* 一個站臺只適用一個基準 —— 它不是平地就是山區。
+   同時列出兩個門檻是錯的:岸際雷達拿到 240 mm 不該被標成「已達山區基準」。
+   地形記在類別上（雷達站一律平地、中繼站臺山區）,個別站臺可以覆寫
+   —— 同一種設備架在山上還是海邊,是位置的事,不是設備的事。 */
+function terrainOf(st) {
+  const own = st && st.terrain;
+  if (own === 'flat' || own === 'hill') return own;
+  const t = st && DB.types.find(x => x.id === st.type);
+  return t && t.terrain === 'hill' ? 'hill' : 'flat';
+}
+function dgpaMark(h24, st) {
+  if (h24 == null) return null;
+  const k = terrainOf(st), T = TERRAIN[k];
+  return h24 >= T.thr ? { t: `已達${T.label}基準`, terrain: k, label: T.label, thr: T.thr, col: T.col } : null;
+}
+/* 這個類別的站臺要不要進回報稿。中繼站臺是自用監看,不進交接通報。 */
+const inReport = st => {
+  const t = st && DB.types.find(x => x.id === st.type);
+  return !(t && t.noReport);
+};
 
 function rainLevel(r) {
   if (!r) return null;
@@ -1931,7 +1971,7 @@ function stationCard(s, imp, i, total) {
   const rb = nearestRain(s);
   if (rb && rb.o.h24 != null) {
     const L = rainLevel(rb.o);
-    const dm = dgpaMark(rb.o.h24);
+    const dm = dgpaMark(rb.o.h24, s);
     // 等級與停班課標記本身不該被折行拆開——「大／豪雨」分兩行會看成兩個等級。
     const nb = 'white-space:nowrap';
     meta.push(`<span style="${nb}">24 小時雨量 ${Math.round(rb.o.h24)} mm</span>`
@@ -1943,7 +1983,8 @@ function stationCard(s, imp, i, total) {
       <i class="st-i" style="background:${S_COL[s.status]}"></i>
       ${imp ? bfBadge(imp.now.bf, 'md') : ''}
       <div class="st-b">
-        <div class="st-n">${esc(s.name)} <em>${esc(t.label)}</em></div>
+        <div class="st-n">${esc(s.name)} <em>${esc(t.label)}</em>${t.noReport
+          ? '<em style="border-color:var(--sb);color:var(--sb)" title="此類別不會出現在回報稿">不列入回報</em>' : ''}</div>
         <div class="st-m">${meta.map(x => `<span>${x}</span>`).join('')}</div>
         ${s.note ? `<div class="st-m" style="color:var(--fg4)"><span>${esc(s.note)}</span></div>` : ''}
       </div>
@@ -2133,7 +2174,7 @@ function rainCell(st) {
   return `<td><span style="font-family:var(--mono);font-weight:700;color:${L ? L.col : 'var(--fg2)'}">`
     + `${v(r.h24)}</span><span style="font-size:0.6875rem;color:var(--fg4)"> mm/24h</span>`
     + (L ? `<b style="display:block;font-size:0.6875rem;color:${L.col}">${L.name}</b>` : '')
-    + (() => { const m = dgpaMark(r.h24); return m
+    + (() => { const m = dgpaMark(r.h24, st); return m
         ? `<b style="display:block;font-size:0.6875rem;color:${m.col}">停班課${m.t}</b>` : ''; })()
     + `<span style="display:block;font-size:0.6875rem;color:var(--fg4)">`
     + `時雨 ${v(r.h1)}　${esc(r.name)} ${Math.round(rb.km)}km</span></td>`;
@@ -2265,16 +2306,17 @@ function briefText() {
     const rb = nearestRain(x);
     const lv = rb && rainLevel(rb.o);
     if (!lv) return null;
-    const m = dgpaMark(rb.o.h24);
+    const m = dgpaMark(rb.o.h24, x);
     if (m) anyDgpa = true;
     return `${IN}${x.name}：鄰近${rb.o.name}站 24 小時累積 ${Math.round(rb.o.h24)} 毫米`
-      + `（${lv.name}等級${m ? `，已達停班停課雨量參考基準之${m.t.replace('已達', '')}` : ''}）。`;
+      + `（${lv.name}等級${m ? `，已達停班停課雨量參考基準之${m.label}基準 ${m.thr} 毫米` : ''}）。`;
   }).filter(Boolean);
   if (rains.length) {
     L.push(''); L.push('雨量實測（自動雨量站）'); L.push(...rains);
     if (anyDgpa) {
       L.push(`${IN}※ 停班停課基準為未來 24 小時累積雨量「預測」達山區 ${DGPA_HILL} 毫米、`
-        + `平地 ${DGPA_FLAT} 毫米，且已致災或有致災之虞，由地方政府研判宣布；`
+        + `平地 ${DGPA_FLAT} 毫米（各站依其所在地形取一個基準），`
+        + '且已致災或有致災之虞，由地方政府研判宣布；'
         + '上列為雨量站實測累積，達標不等於已宣布停班停課，請以人事行政總處公告為準。');
     }
   }
@@ -2547,7 +2589,8 @@ function rainHint() {
   if (!RAIN.length) return '';
   return `雨量取最近雨量站（${RAIN.length} 站），分級依氣象署標準。`
     + '<b>關機門檻只看風，雨量供研判道路與積水風險。</b>'
-    + `停班停課參考基準為 24 小時山區 ${DGPA_HILL} mm、平地 ${DGPA_FLAT} mm；`
+    + `停班停課參考基準依各站地形取一個：平地 ${DGPA_FLAT} mm、山區 ${DGPA_HILL} mm`
+    + '（地形設在設備類別，個別站臺可覆寫）；'
     + '<b>官方基準看的是「預測」雨量，此處為雨量站「實測」累積，'
     + '且達標仍須地方政府依致災情形研判，不等於一定停班停課。</b>';
 }
@@ -2818,14 +2861,17 @@ function generate() {
      沒填座標的排在最後,同緯度或都沒座標時才回到時間先後。 */
   const nsAt = (a, b) => (Number.isFinite(b.lat) ? b.lat : -1e3) - (Number.isFinite(a.lat) ? a.lat : -1e3)
     || a.at - b.at;
+  /* 標成「不列入回報」的類別整個不進交接通報（中繼站臺是自用監看）。
+     它們仍然出現在站臺頁、衝擊表與播報 —— 值班的人自己要看,只是不對外發。 */
+  const rTypes = DB.types.filter(t => !t.noReport);
   const inType = id => DB.stations.filter(s => s.type === id).sort(nsAt);
-  const back = DB.stations.filter(s => s.status === 'on' && s.at >= since).sort(nsAt);
+  const back = DB.stations.filter(s => s.status === 'on' && s.at >= since && inReport(s)).sort(nsAt);
   const bs = [];
   let txt = '';
 
   if (DB.tpl === 'A') {
     const intro = (c.introA || '').replace('{颱風}', DB.ty.name || '（颱風名稱）');
-    DB.types.forEach(t => {
+    rTypes.forEach(t => {
       const items = inType(t.id).filter(s => s.status !== 'on')
         .sort((a, b) => (a.status === 'standby') - (b.status === 'standby') || nsAt(a, b))
         .map(s => repLine(s, opt));
@@ -2835,13 +2881,13 @@ function generate() {
     bs.push({ title: c.endA, body: '', n: 1 });
     txt = head + intro + '\n' + joinBlocks(bs, opt);
   } else {
-    DB.types.forEach(t => {
+    rTypes.forEach(t => {
       const off = inType(t.id).filter(s => s.status === 'off');
       if (off.length) bs.push(blk(`尚未開機${t.report}計${off.length}處：`, off.map(s => repLine(s, opt)), opt));
     });
     if (!bs.length && opt.empty) bs.push(blk('尚未開機站臺計0處：', [], opt));
     bs.push(blk(`已復機站臺${back.length}處：`, back.map(s => repLine(s, opt)), opt));
-    const sb = DB.stations.filter(s => s.status === 'standby').sort(nsAt);
+    const sb = DB.stations.filter(s => s.status === 'standby' && inReport(s)).sort(nsAt);
     if (sb.length || opt.empty) bs.push(blk(`待機站臺計${sb.length}處：`, sb.map(s => repLine(s, opt)), opt));
     bs.push({ title: c.endB, body: '', n: 1 });
     txt = head + joinBlocks(bs, opt);
@@ -3050,6 +3096,14 @@ function openStation(id) {
         <input type="number" id="f_hum" min="0" max="100" value="${s && s.hum != null ? s.hum : ''}" placeholder="未量測"></label>
       <label class="fld"><span class="lb">備註</span>
         <input type="text" id="f_note" value="${esc(s ? s.note : '')}" placeholder="選填"></label></div>
+    <label class="fld"><span class="lb">地形　停班停課雨量基準</span>
+      <select id="f_terr">
+        <option value="">依類別</option>
+        ${Object.entries(TERRAIN).map(([k, v]) =>
+          `<option value="${k}" ${s && s.terrain === k ? 'selected' : ''}>${v.label}　${v.thr} mm</option>`).join('')}
+      </select>
+      <span class="sub">平地 ${DGPA_FLAT} mm、山區 ${DGPA_HILL} mm。同一種設備架在山上還是海邊是位置的事，
+      這裡可以覆寫類別的設定。</span></label>
     <div class="btnrow">
       <button class="btn pri" id="f_save">儲存</button>
       ${s ? '<button class="btn dg" id="f_del">刪除</button>' : ''}</div>`,
@@ -3084,6 +3138,7 @@ function openStation(id) {
           lat: c ? c.lat : null, lng: c ? c.lng : null,
           hum: humv === '' ? null : clamp(+humv, 0, 100),
           note: $('#f_note').value.trim(),
+          terrain: $('#f_terr').value || null,
         };
         if (s) { if (s.status !== d.status) DB.log.push({ t: Date.now(), name, from: s.status, to: d.status, at: d.at }); Object.assign(s, d); }
         else { DB.stations.push(Object.assign({ id: uid() }, d)); DB.log.push({ t: Date.now(), name, from: null, to: d.status, at: d.at }); }
@@ -3120,17 +3175,38 @@ function openTypes() {
     <label class="fld" style="margin-bottom:0.5rem"><span class="lb">回報段落用語</span>
       <input type="text" data-t="${t.id}" data-k="report" value="${esc(t.report)}">
       <span class="sub">產出時寫成「一、${esc(t.report)}3處：」</span></label>
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">地形</span>
+      <select data-t="${t.id}" data-k="terrain">
+        ${Object.entries(TERRAIN).map(([k, v]) =>
+          `<option value="${k}" ${t.terrain === k ? 'selected' : ''}>${v.label}　停班停課基準 ${v.thr} mm</option>`).join('')}
+      </select>
+      <span class="sub">停班停課的 24 小時雨量基準：平地 ${DGPA_FLAT} mm、山區 ${DGPA_HILL} mm。個別站臺可在該站「編輯」裡覆寫。</span></label>
+    <div class="sw" style="margin-bottom:0.5rem"><div class="sw-t"><b>列入回報稿</b>
+      <small>${t.noReport ? '目前不列入。自用監看，不進交接通報' : '目前列入交接通報'}</small></div>
+      <button class="tgl" data-t="${t.id}" data-k="noReport" aria-pressed="${!t.noReport}"></button></div>
     <button class="btn sm dg" data-del="${t.id}">刪除此類別</button></div>`).join('');
   openSheet('設備類別', rows + `
     <div class="btnrow"><button class="btn pri wide" id="t_add">新增類別</button></div>
-    <p class="hint" style="margin-top:0.75rem">類別完全由您自訂，程式不預設任何實際設備名稱。刪除類別前，請先把該類別下的站臺改到其他類別。</p>`,
+    <p class="hint" style="margin-top:0.75rem">類別完全由您自訂，程式不預設任何實際設備名稱。刪除類別前，請先把該類別下的站臺改到其他類別。
+    關掉「列入回報稿」的類別，仍會出現在站臺頁、衝擊預判與播報，只是不進交接通報。</p>`,
     () => {
+      $('#shBody').addEventListener('change', e => {
+        const el = e.target.closest('select[data-t]'); if (!el) return;
+        const t = DB.types.find(x => x.id === el.dataset.t); if (!t) return;
+        t[el.dataset.k] = el.value; save(); renderStations(); renderTyphoon({}); generate();
+      });
       $('#shBody').addEventListener('input', e => {
-        const el = e.target.closest('[data-t]'); if (!el) return;
+        const el = e.target.closest('input[data-t]'); if (!el) return;
         const t = DB.types.find(x => x.id === el.dataset.t); if (!t) return;
         t[el.dataset.k] = el.value; save();
       });
       $('#shBody').addEventListener('click', e => {
+        const g = e.target.closest('button.tgl[data-t]');
+        if (g) {
+          const t = DB.types.find(x => x.id === g.dataset.t);
+          if (t) { t.noReport = !t.noReport; save(); openTypes(); renderStations(); generate(); }
+          return;
+        }
         const d = e.target.closest('[data-del]');
         if (d) {
           const used = DB.stations.filter(s => s.type === d.dataset.del).length;
@@ -3140,7 +3216,8 @@ function openTypes() {
         }
       });
       $('#t_add').onclick = () => {
-        DB.types.push({ id: uid(), label: '新類別', report: '新類別' }); save(); openTypes(); renderStations();
+        DB.types.push({ id: uid(), label: '新類別', report: '新類別', terrain: 'flat', noReport: false });
+        save(); openTypes(); renderStations();
       };
     });
 }
