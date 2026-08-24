@@ -668,6 +668,10 @@ function relative(ts) {
 /* ═══ 蒲福風級：全機唯一的風速語言 ═══════════════════════
    所有風速一律換算為級數呈現，不出現 kt 或 m/s 為主的敘述。   */
 const BF_MIN = [0, 0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7, 37.0, 41.5, 46.2, 51.0, 56.1];
+/* 成為「颱風」的門檻:近中心最大風達八級（17.2 m/s）。
+   低於這個值是熱帶性低氣壓 —— 它「沒有七級風暴風範圍」,
+   氣象署也不會對它發布颱風警報。                              */
+const TY_MIN_MS = BF_MIN[8];
 const BF_NAME = ['無風', '軟風', '輕風', '微風', '和風', '清風', '強風', '疾風', '大風', '烈風',
   '狂風', '暴風', '颶風', '颶風', '颶風', '颶風', '颶風', '颶風'];
 function ms2bf(ms) {
@@ -914,7 +918,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v13';
+const APP_VER = 'v14';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1021,8 +1025,12 @@ function parseCyclone(c) {
   const ft = fixTime(cur);
   const t0 = Number.isFinite(ft) ? ft : Date.now();
   const vmax = num(pick(cur, 'MaxWindSpeed', 'maxWindSpeed')) || 0;
+  /* 七級風半徑。氣象署沒給的時候才用強度推估 ——
+     但只有「已經是颱風」才有暴風範圍可言。熱帶性低氣壓給 0,
+     不能替一個沒有暴風圈的系統憑空生一個 150 公里出來,
+     那會讓後面的警報推算以為暴風範圍已經罩住台灣。          */
   const r15 = Math.round(galeRadius(cur)) ||
-    (vmax >= 33 ? 250 : vmax >= 25 ? 200 : 150);
+    (vmax >= 33 ? 250 : vmax >= 25 ? 200 : vmax >= TY_MIN_MS ? 150 : 0);
 
   // 預報時距:優先用 Tau/ForecastHour,沒有就拿 DateTime 減掉分析時刻。
   const tauOf = f => {
@@ -1468,7 +1476,7 @@ async function fetchGDACS() {
     name: String(pr.eventname || pr.name || '未命名').trim(), en: pr.eventname || '',
     t0: new Date(pr.todate || pr.fromdate || Date.now()).getTime(),
     pos: best.p, vmax, gust: 0, pres: 0, mvDir: '', mvSpd: 0,
-    r15: vmax >= 33 ? 250 : vmax >= 25 ? 200 : 150,
+    r15: vmax >= 33 ? 250 : vmax >= 25 ? 200 : vmax >= TY_MIN_MS ? 150 : 0,
     track: [], past: [],
   };
 }
@@ -1566,9 +1574,15 @@ function windAt(snap, p) {
 function predictWarnings(series, seaBuf) {
   const buf = Number.isFinite(seaBuf) ? seaBuf : 100;
   let seaIn = null, seaOut = null, landIn = null, landOut = null, cpa = null;
+  let isTy = false;                      // 這段期間內有沒有達到颱風強度
   for (const s of series) {
     const d = distToTaiwan(s.pos);
     if (cpa == null || d < cpa.d) cpa = { d, t: s.t, h: s.h };
+    /* 只有「當下已經是颱風」的時刻才算得上暴風範圍侵襲。
+       熱帶性低氣壓不會有颱風警報 —— 氣象署改以豪大雨或強風特報因應。
+       少了這個條件,一個 6 級的低壓也會被算成「暴風範圍影響中」。 */
+    if (s.vmax < TY_MIN_MS || !(s.r15 > 0)) continue;
+    isTy = true;
     const sea = s.r15 >= d - buf, land = s.r15 >= d;
     if (sea) { if (seaIn == null) seaIn = s; seaOut = s; }
     if (land) { if (landIn == null) landIn = s; landOut = s; }
@@ -1578,7 +1592,7 @@ function predictWarnings(series, seaBuf) {
     affect: i.t, issue: i.t - lead * 3600000, clear: o.t,
     phase: now >= o.t ? 'done' : now >= i.t ? 'active' : now >= i.t - lead * 3600000 ? 'issued' : 'pending',
   } : null;
-  return { cpa, sea: wrap(seaIn, seaOut, 24), land: wrap(landIn, landOut, 18) };
+  return { cpa, isTy, sea: wrap(seaIn, seaOut, 24), land: wrap(landIn, landOut, 18) };
 }
 
 /* ═══ 站台衝擊：何時該關、何時可復 ═══════════════════════ */
@@ -2271,6 +2285,29 @@ function typhoonPicker() {
 
 function warningCard() {
   if (!WARN) return `<div class="msg w">目前來源沒有官方預報路徑，無法推算警報時機。到設定填入中央氣象署授權碼即可啟用。</div>`;
+
+  /* 熱帶性低氣壓不會有颱風警報 —— 氣象署的颱風警報只發給
+     近中心最大風達八級（17.2 m/s）以上的系統。
+     這裡不能拿它去套海警／陸警的推算,否則會端出一個
+     「預估發布陸上颱風警報」這種根本不會發生的結論。      */
+  if (!WARN.isTy) {
+    const ty0 = DB.ty.data;
+    const cpa = WARN.cpa
+      ? `<div class="warnrow"><div class="wi" style="background:#EF5B4C22;color:#EF5B4C">🎯</div>
+         <div class="wt"><b>中心最接近</b><small>距台灣最近約 ${Math.round(WARN.cpa.d)} 公里</small></div>
+         <div class="wv" style="color:#EF5B4C">${fmtWhen(WARN.cpa.t)}
+         <br><span style="color:var(--fg4);font-weight:400">${fmtShort(WARN.cpa.t)}　${relative(WARN.cpa.t)}</span></div></div>`
+      : '';
+    return `<div class="sec"><h2>警報時機預判</h2></div>
+      <div class="msg i" style="margin-bottom:0.75rem">
+        目前是<b>${TC_FULL[tcClass(ty0 ? ty0.vmax : 0)] || '熱帶性低氣壓'}</b>
+        （近中心最大風 ${bfLabel(ms2bf(ty0 ? ty0.vmax : 0))}），
+        <b>不會發布颱風警報</b> —— 中央氣象署的海上／陸上颱風警報，
+        只發給近中心最大風達 8 級（17.2 m/s）以上的颱風。
+        這類系統氣象署改以<b>豪大雨特報、強風特報</b>因應，請看播報頁的特報清單。
+        若後續增強為颱風，這裡就會出現警報時機推算。</div>
+      ${cpa ? `<div class="card" style="margin-bottom:0.75rem">${cpa}</div>` : ''}`;
+  }
   // 外推來的時機和官方預報算出來的時機,風險完全不同,不能長得一樣。
   const exNote = EXTRAP ? `<div class="msg w" style="margin-bottom:0.5rem">
     以下時機是由<b>外推路徑</b>推算的，不是根據中央氣象署的預報路徑。
@@ -2620,8 +2657,8 @@ function drawMap(ty) {
       o.track.forEach(f => L.circleMarker([f.pos.lat, f.pos.lng],
         { radius: 2.5, color: '#EFAA35', fillColor: '#B4700B', fillOpacity: 1, weight: 1 }).addTo(MLAYER));
     }
-    L.circle([o.pos.lat, o.pos.lng], {
-      radius: Math.max(o.r15, 0) * 1000, color: '#EFAA35', weight: 1.4,
+    if (o.r15 > 0) L.circle([o.pos.lat, o.pos.lng], {
+      radius: o.r15 * 1000, color: '#EFAA35', weight: 1.4,
       dashArray: '4,4', fillColor: '#EFAA35', fillOpacity: .06,
     }).addTo(MLAYER);
     L.marker([o.pos.lat, o.pos.lng], { icon: tyEye(false), zIndexOffset: 1100 })
@@ -2655,10 +2692,13 @@ function drawMap(ty) {
     });
   }
 
-  L.circle([ty.pos.lat, ty.pos.lng], {
-    radius: ty.r15 * 1000, color: '#EF5B4C', weight: 2,
-    fillColor: '#EF5B4C', fillOpacity: .10,
-  }).bindTooltip(`七級風半徑 ${ty.r15} km`).addTo(MLAYER);
+  // 沒有暴風圈就不要畫圈 —— 熱帶性低氣壓本來就沒有七級風範圍
+  if (ty.r15 > 0) {
+    L.circle([ty.pos.lat, ty.pos.lng], {
+      radius: ty.r15 * 1000, color: '#EF5B4C', weight: 2,
+      fillColor: '#EF5B4C', fillOpacity: .10,
+    }).bindTooltip(`七級風半徑 ${ty.r15} km`).addTo(MLAYER);
+  }
 
   L.marker([ty.pos.lat, ty.pos.lng], { icon: tyEye(true), zIndexOffset: 1300 })
     .bindTooltip(`${ty.name}　${tcLabel(ty.vmax)}`).addTo(MLAYER);
