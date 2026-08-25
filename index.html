@@ -220,6 +220,11 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .tag-off{background:var(--no-d);color:var(--no)}
 .tag-pl{background:transparent;color:var(--fg4);border:1px dashed var(--edge2)}
 .tag-aux{background:var(--aux-d);color:var(--aux)}
+/* 全臺表的分組標題（西部／東部／外離島）。離島夾在本島中間會讓
+   「從上往下找自己的縣市」那條線斷掉,所以分組,組內才照緯度由北至南。 */
+.cgrp{font-family:var(--mono);font-size:0.6875rem;letter-spacing:.12em;color:var(--fg4);
+  padding:0.625rem 0 0.1875rem;border-top:1px solid var(--edge2);margin-top:0.375rem}
+.cgrp:first-of-type{margin-top:0}
 
 /* 颱風頁最上面那一條。原本是「區塊標題＋一整段說明框」佔掉兩三行,
    而那段說明每一句在別的地方都又講了一次。留下真正會變的東西:
@@ -1046,7 +1051,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v26';
+const APP_VER = 'v27';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1521,8 +1526,18 @@ const COUNTY_PT = {
   高雄市: { lat: 22.627, lng: 120.302 },
   屏東縣: { lat: 22.551, lng: 120.549 },
 };
-// 由北到南:直接照緯度排,不另外定一份「習慣順序」——那會跟畫面上寫的「由北到南」不一致
-const COUNTIES_NS = Object.keys(COUNTY_PT).sort((a, b) => COUNTY_PT[b].lat - COUNTY_PT[a].lat);
+/* 排法:西部由北至南 → 東部（宜、花、東）→ 外離島（澎、金、馬）。
+   純照緯度排會把連江縣擺在最前面、金門插在苗栗與臺中之間 ——
+   緯度上沒錯,但看的人是照著臺灣本島從上往下找自己的縣市,
+   離島夾在中間會讓那條線斷掉。所以分三組,組內才照緯度由北至南。 */
+const COUNTY_GROUPS = [
+  { label: '西部', names: ['基隆市', '臺北市', '新北市', '桃園市', '新竹縣', '新竹市', '苗栗縣',
+      '臺中市', '彰化縣', '南投縣', '雲林縣', '嘉義市', '嘉義縣', '臺南市', '高雄市', '屏東縣'] },
+  { label: '東部', names: ['宜蘭縣', '花蓮縣', '臺東縣'] },
+  // 外離島用慣用的「澎金馬」順序,不照緯度 —— 那三個字本來就是一組固定的講法
+  { label: '外離島', names: ['澎湖縣', '金門縣', '連江縣'] },
+];
+const COUNTIES_NS = COUNTY_GROUPS.flatMap(g => g.names);
 
 function dgpaRule(county, terrain) {
   const r = DGPA_BY_NORM[cnorm(county)];
@@ -2778,9 +2793,13 @@ function dgpaCard() {
     代表點取縣市政府所在地，山區與離島的實際風雨會與它不同。請以
     <a href="${DGPA_URL}" target="_blank" rel="noopener">人事行政總處公告</a>為準。</div></details>`;
 
+  const byName = Object.fromEntries(rows.map(r => [r.name, r]));
+  const groups = COUNTY_GROUPS.map(g => `<div class="cgrp">${g.label}</div>`
+    + g.names.map(n => row(byName[n])).join('')).join('');
+
   return head + `<div class="card pad" style="margin-bottom:0.75rem">
     ${src}${err}${sum}
-    ${rows.map(row).join('')}
+    ${groups}
     <div class="btnrow" style="margin-top:0.625rem">
       <a class="btn pri sm" href="${DGPA_URL}" target="_blank" rel="noopener"
         style="text-decoration:none">開啟官方公告 ↗</a></div>
