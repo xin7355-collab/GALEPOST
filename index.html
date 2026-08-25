@@ -1059,7 +1059,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v28';
+const APP_VER = 'v29';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -4222,16 +4222,26 @@ function renderSettings() {
       .map(([v, l]) => `<option value="${v}" ${c.lockMin === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     <div class="sw"><div class="sw-t"><b>備份含座標</b><small>關閉後，匯出的備份不含任何站臺座標</small></div>
       <button class="tgl" id="c_expc" aria-pressed="${c.exportCoords}"></button></div>
-    <div class="btnrow" style="margin-top:0.875rem">
+    <label class="fld" style="margin:0.875rem 0 0.5rem"><span class="lb">匯出範圍</span>
+      <select id="c_scope">
+        ${EXP_SCOPES().map(o => `<option value="${o.k}" ${expScope === o.k ? 'selected' : ''}>${
+          esc(o.label)}${o.n != null ? `（${o.n} 站）` : ''}</option>`).join('')}
+      </select></label>
+    <div class="btnrow">
       <button class="btn" id="c_exp">匯出備份</button>
       <button class="btn" id="c_expE">加密匯出</button>
       <button class="btn" id="c_imp">匯入備份</button>
     </div>
-    <p class="hint" style="margin-top:0.5rem"><b>全面備份</b>：站臺、類別、設備類別設定、
+    <p class="hint" style="margin-top:0.5rem"><b>全部（完整備份）</b>：站臺、類別、設備類別設定、
       紀錄、本次管制、回報用語、管制門檻，以及<b>中央氣象署授權碼</b>與停班停課來源網址，
-      連字級、底圖、對焦這些顯示偏好都一起帶走，換手機直接還原。
-      <b style="color:var(--sb)">因為含授權碼，這個檔案等同憑證，不要外傳；
-      要給別人看請用「加密匯出」。</b>開啟密碼也在裡面，但匯入時會先問要不要一併還原。</p>
+      連字級、底圖、對焦這些顯示偏好都一起帶走，換手機直接還原。<br>
+      <b>單一類別</b>：只帶那個類別的站臺、它的類別定義與相關紀錄，不含設定與授權碼；
+      <b>匯入時一律「合併」</b>（依站臺名稱覆蓋或新增），其他類別不會被動到。<br>
+      <b>僅設定</b>：門檻、用語、授權碼、來源網址與類別定義，<b>不含任何站臺</b>——換新機時
+      先把設定帶過去最方便。<br>
+      完整備份匯入時會問要<b>取代</b>還是<b>合併</b>。
+      <b style="color:var(--sb)">完整與僅設定含授權碼，等同憑證，不要外傳；
+      要給別人請用「加密匯出」。</b>開啟密碼也在裡面，但匯入時會先問要不要一併還原。</p>
     <div class="btnrow" style="margin-top:0.5rem">
       <button class="btn dg wide" id="c_wipe">清除本機全部資料</button></div>
     <input type="file" id="c_file" accept=".json" hidden>
@@ -4283,6 +4293,7 @@ function renderSettings() {
   bind('#c_lock', e => { c.lockMin = +e.target.value; save(); });
   bindToggle('#c_auto', () => c.auto, v => { c.auto = v; save(); setAuto(v); });
   bindToggle('#c_expc', () => c.exportCoords, v => { c.exportCoords = v; save(); });
+  bind('#c_scope', e => { expScope = e.target.value; });
   $('#c_exp').onclick = () => doExport(false);
   $('#c_expE').onclick = () => doExport(true);
   $('#c_imp').onclick = () => $('#c_file').click();
@@ -4314,22 +4325,57 @@ function refreshAll() {
    關掉「備份含座標」並不夠 —— 那只擋座標。 */
 const UI_KEYS = ['galepost.ui.ts', 'galepost.ui.tysub', 'galepost.ui.basemap',
   'galepost.ui.mapfocus', 'galepost.ui.aux', 'galepost.ui.windyfocus'];
-function exportPayload() {
+
+/* 匯出範圍。
+   `all` 是整份;`cfg` 只有設定（換新機先把門檻、用語、授權碼帶過去,
+   不必連別人的站臺一起搬進來）;其餘是單一設備類別。
+
+   **分類匯出必然要有分類匯入。** 只匯出雷達、再照舊的方式匯入,
+   會把整個 DB 換成「只有雷達」那一份 —— 紅外線與中繼站臺就沒了。
+   所以分類的備份一律走**合併**:依站臺名稱比對,有的覆蓋、沒有的新增,
+   範圍以外的東西一律不動。整份備份才會問要取代還是合併。            */
+const EXP_SCOPES = () => [
+  { k: 'all', label: '全部（完整備份）' },
+  ...DB.types.map(t => ({ k: t.id, label: t.label,
+    n: DB.stations.filter(x => x.type === t.id).length })),
+  { k: 'cfg', label: '僅設定（不含站臺）' },
+];
+let expScope = 'all';
+
+function exportPayload(scope) {
+  const sc = scope || 'all';
   const d = JSON.parse(JSON.stringify(DB));
-  if (!DB.cfg.exportCoords) d.stations.forEach(s => { s.lat = null; s.lng = null; });
   d.ty.data = null; d.ty.list = [];    // 颱風資料每次重抓即可,備份它只會過期
-  const ui = {};
-  for (const k of UI_KEYS) {
-    try { const v = localStorage.getItem(k); if (v != null) ui[k] = v; } catch (e) {}
+
+  let info = { kind: 'all' };
+  if (sc === 'cfg') {
+    info = { kind: 'cfg' };
+    d.stations = []; d.log = [];
+  } else if (sc !== 'all') {
+    const t = DB.types.find(x => x.id === sc);
+    const keep = d.stations.filter(x => x.type === sc);
+    const names = new Set(keep.map(x => x.name));
+    info = { kind: 'type', typeId: sc, typeLabel: t ? t.label : '', n: keep.length };
+    d.stations = keep;
+    /* 只帶這個類別的定義 —— 匯入端的類別 id 不一定一樣,
+       所以要靠 label 對回去;帶著整份 types 反而會蓋掉對方的設定。 */
+    d.types = t ? [JSON.parse(JSON.stringify(t))] : [];
+    d.log = (d.log || []).filter(e => e && names.has(e.name));
+    // 分類備份不帶這些「整體性」的東西,它們不屬於某一個類別
+    delete d.cfg; delete d.ctl; delete d.ty; delete d.since; delete d.tpl;
   }
-  return {
-    galepost: 'full1',
-    app: APP_VER,
-    at: new Date().toISOString(),
-    db: d,
-    ui,
-  };
+  if (!DB.cfg.exportCoords && d.stations) {
+    d.stations.forEach(x => { x.lat = null; x.lng = null; });
+  }
+  const ui = {};
+  if (info.kind !== 'type') {
+    for (const k of UI_KEYS) {
+      try { const v = localStorage.getItem(k); if (v != null) ui[k] = v; } catch (e) {}
+    }
+  }
+  return { galepost: 'full1', app: APP_VER, at: new Date().toISOString(), scope: info, db: d, ui };
 }
+
 function download(obj, name) {
   const b = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -4337,14 +4383,48 @@ function download(obj, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1500);
 }
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+// 檔名帶上範圍 —— 三個檔案都叫「風哨備份」的話,要還原時分不出哪個是哪個
+const scopeName = sc => sc === 'all' ? '完整'
+  : sc === 'cfg' ? '設定'
+  : (DB.types.find(t => t.id === sc) || {}).label || '站臺';
 async function doExport(enc) {
-  const p = exportPayload();
-  if (!enc) { download(p, `風哨備份_${stamp()}.json`); toast('備份已下載'); return; }
+  const p = exportPayload(expScope);
+  const nm = scopeName(expScope);
+  if (p.scope.kind === 'type' && !p.scope.n
+    && !confirm(`「${nm}」目前沒有任何站臺，還是要匯出嗎？`)) return;
+  if (!enc) { download(p, `風哨備份_${nm}_${stamp()}.json`); toast(`已下載「${nm}」備份`); return; }
   const pw = prompt('設定備份檔密碼（解密時需要，遺失無法還原）：');
   if (!pw) return;
-  try { download(await encryptJSON(p, pw), `風哨備份_加密_${stamp()}.json`); toast('加密備份已下載'); }
-  catch (e) { toast('加密失敗：' + e.message); }
+  try {
+    download(await encryptJSON(p, pw), `風哨備份_${nm}_加密_${stamp()}.json`);
+    toast(`已下載「${nm}」加密備份`);
+  } catch (e) { toast('加密失敗：' + e.message); }
 }
+/* 依名稱合併站臺:有的覆蓋、沒有的新增,範圍以外的一律不動。
+   名稱是這支程式一直以來的比對依據（貼回報建檔也是照名稱比對）。 */
+function mergeStations(incoming, typeId) {
+  let add = 0, upd = 0;
+  for (const r of incoming) {
+    if (!r || !r.name) continue;
+    const ex = DB.stations.find(x => x.name === r.name);
+    const d = Object.assign({}, r, { type: typeId || r.type });
+    if (ex) { Object.assign(ex, d, { id: ex.id }); upd++; }
+    else { DB.stations.push(Object.assign({ id: uid() }, d)); add++; }
+  }
+  return { add, upd };
+}
+
+/* 匯入端的類別 id 不一定跟匯出端一樣,所以照 label 對回去;
+   對不到就把備份裡那個類別整個加進來。 */
+function adoptType(t) {
+  if (!t) return DB.types[0] ? DB.types[0].id : '';
+  const ex = DB.types.find(x => x.label === t.label || x.report === t.report);
+  if (ex) return ex.id;
+  const id = uid();
+  DB.types.push(Object.assign({}, t, { id }));
+  return id;
+}
+
 function doImport(e) {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();
@@ -4356,11 +4436,69 @@ function doImport(e) {
         if (!pw) return;
         o = await decryptJSON(o, pw);
       }
-      // 新版是 {galepost:'full1', db:…, ui:…};舊版直接就是 DB 本身,兩種都要接
+      // 新版是 {galepost:'full1', scope, db, ui};舊版直接就是 DB 本身,兩種都要接
       const full = o && o.galepost === 'full1';
       const body = full ? o.db : o;
       const ui = full ? (o.ui || {}) : null;
-      if (!body || !Array.isArray(body.stations)) throw new Error('不是風哨的備份檔');
+      const sc = (full && o.scope) || { kind: 'all' };
+      if (!body || typeof body !== 'object') throw new Error('不是風哨的備份檔');
+      if (sc.kind === 'all' && !Array.isArray(body.stations)) throw new Error('不是風哨的備份檔');
+
+      const applyUI = () => {
+        if (!ui) return;
+        for (const k of UI_KEYS) {
+          if (ui[k] == null) continue;
+          try { localStorage.setItem(k, ui[k]); } catch (err) {}
+        }
+      };
+
+      /* ── 單一類別:一律合併,絕不取代 ──
+         只匯出雷達、再照整份的方式套用,會把紅外線與中繼站臺一起洗掉。 */
+      if (sc.kind === 'type') {
+        const tid = adoptType((body.types || [])[0]);
+        const n = mergeStations(body.stations || [], tid);
+        // 該類別的紀錄一併併回來,重複的（同名同時刻同狀態）跳過
+        const seen = new Set((DB.log || []).map(x => `${x.name}|${x.at}|${x.to}`));
+        for (const l of (body.log || [])) {
+          const k = `${l.name}|${l.at}|${l.to}`;
+          if (!seen.has(k)) { DB.log.push(l); seen.add(k); }
+        }
+        DB.log.sort((x, y) => x.at - y.at);
+        save(); refreshAll(); renderSettings(); syncForm();
+        toast(`已合併「${sc.typeLabel || '站臺'}」：新增 ${n.add}、更新 ${n.upd}`);
+        return;
+      }
+
+      /* ── 僅設定:只動設定與類別,不碰站臺 ── */
+      if (sc.kind === 'cfg') {
+        if (!confirm('這是「僅設定」的備份。將覆蓋管制門檻、回報用語、授權碼與來源網址，'
+          + '站臺與紀錄不會被動到。要繼續嗎？')) return;
+        const keepPin = DB.cfg.pin;
+        const base = blankDB();
+        DB.cfg = Object.assign({}, base.cfg, body.cfg || {});
+        DB.cfg.pin = keepPin;
+        if (Array.isArray(body.types) && body.types.length) DB.types = body.types;
+        applyUI();
+        save(); refreshAll(); renderSettings(); syncForm();
+        toast('設定已匯入（站臺未變動）');
+        return;
+      }
+
+      /* ── 整份:問要取代還是合併 ──
+         取代是原本的行為;會把現有站臺清掉,所以要問。 */
+      const replace = confirm(`這是完整備份（${(body.stations || []).length} 個站臺）。\n\n`
+        + '按「確定」＝取代：清掉這台目前的站臺與設定，完全還原成備份的樣子\n'
+        + '按「取消」＝合併：保留現有站臺，備份裡有的依名稱覆蓋或新增，設定不動');
+
+      if (!replace) {
+        const idMap = {};
+        for (const t of (body.types || [])) idMap[t.id] = adoptType(t);
+        const n = mergeStations((body.stations || []).map(x =>
+          Object.assign({}, x, { type: idMap[x.type] || x.type })));
+        save(); refreshAll(); renderSettings(); syncForm();
+        toast(`已合併：新增 ${n.add}、更新 ${n.upd}（設定未變動）`);
+        return;
+      }
 
       /* 密碼要不要一併還原,一定要問。不問就蓋掉的話,
          還原一份忘了密碼的舊備份會把人鎖在門外。 */
@@ -4379,12 +4517,7 @@ function doImport(e) {
       DB.cfg = Object.assign({}, defCfg, body.cfg || {}); DB.cfg.pin = usePin;
       DB.ty = Object.assign({}, defTy, body.ty || {});
       if (!Array.isArray(DB.types) || !DB.types.length) DB.types = defTypes;
-      if (ui) {
-        for (const k of UI_KEYS) {
-          if (ui[k] == null) continue;
-          try { localStorage.setItem(k, ui[k]); } catch (e) {}
-        }
-      }
+      applyUI();
       save(); refreshAll(); renderSettings(); syncForm();
       toast(full ? '全面備份已匯入，重新整理後套用顯示偏好' : '備份已匯入');
     } catch (err) { toast('匯入失敗：' + (err.message === 'OperationError' ? '密碼錯誤' : err.message)); }
