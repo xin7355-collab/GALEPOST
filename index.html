@@ -782,8 +782,16 @@ function fmtHM(ts) {
   const d = new Date(ts), h = d.getHours(), m = d.getMinutes();
   return m === 0 ? `${h}時` : `${p2(h)}${p2(m)}時`;
 }
-function fmtMD(ts) { const d = new Date(ts); return `${d.getMonth() + 1}月${d.getDate()}日`; }
-function fmtShort(ts) { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}`; }
+/* 日期一律帶星期。值班表是按星期排的,看到「8月27日」還要自己想那是週幾,
+   而那正是排班時最容易算錯的一步。WEEK 在下面（函式宣告會提升,常數不會,
+   所以這裡自己取一份最小的表,不依賴宣告順序）。 */
+const WK_CH = ['日', '一', '二', '三', '四', '五', '六'];
+const wk = ts => WK_CH[new Date(ts).getDay()];
+function fmtMD(ts) { const d = new Date(ts); return `${d.getMonth() + 1}月${d.getDate()}日(${wk(ts)})`; }
+function fmtShort(ts) {
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}(${wk(ts)}) ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
 function fmtClock(ts) { const d = new Date(ts); return `${p2(d.getHours())}:${p2(d.getMinutes())}`; }
 function toInput(ts) {
   const d = new Date(ts);
@@ -1051,7 +1059,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v27';
+const APP_VER = 'v28';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2409,8 +2417,7 @@ function renderRail() {
     const d = new Date(e.at), dk = `${d.getMonth() + 1}/${d.getDate()}`;
     if (dk !== day) {
       day = dk;
-      const wk = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
-      html += `<div class="rail-day"><b>${d.getMonth() + 1} 月 ${d.getDate()} 日</b><span>週${wk}</span></div>`;
+      html += `<div class="rail-day"><b>${d.getMonth() + 1} 月 ${d.getDate()} 日</b><span>週${wk(e.at)}</span></div>`;
     }
     html += `<div class="ev">
       <div class="ev-t">${fmtClock(e.at)}</div>
@@ -2828,7 +2835,7 @@ function rainCell(st) {
    值班的人不必自己把日期換算成「那是今天還是明天」。
    當天=今日、隔天=明日、再隔天=後天,第四天起用星期。
    超過一週還講「週三」會分不出是哪一個週三,所以改回日期。   */
-const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+const WEEK = WK_CH;                     // 同一份星期表,不再各留一份
 
 function relDay(ts) {
   const a = new Date(); a.setHours(0, 0, 0, 0);
@@ -4220,6 +4227,11 @@ function renderSettings() {
       <button class="btn" id="c_expE">加密匯出</button>
       <button class="btn" id="c_imp">匯入備份</button>
     </div>
+    <p class="hint" style="margin-top:0.5rem"><b>全面備份</b>：站臺、類別、設備類別設定、
+      紀錄、本次管制、回報用語、管制門檻，以及<b>中央氣象署授權碼</b>與停班停課來源網址，
+      連字級、底圖、對焦這些顯示偏好都一起帶走，換手機直接還原。
+      <b style="color:var(--sb)">因為含授權碼，這個檔案等同憑證，不要外傳；
+      要給別人看請用「加密匯出」。</b>開啟密碼也在裡面，但匯入時會先問要不要一併還原。</p>
     <div class="btnrow" style="margin-top:0.5rem">
       <button class="btn dg wide" id="c_wipe">清除本機全部資料</button></div>
     <input type="file" id="c_file" accept=".json" hidden>
@@ -4288,13 +4300,35 @@ function refreshAll() {
   generate();
 }
 
-/* ── 匯出 / 匯入 ─────────────────────────────────────── */
+/* ── 匯出 / 匯入 ───────────────────────────────────────
+   **全面備份**:換手機、重灌之後要能完全還原,所以除了 DB 之外,
+   還要帶上存在 DB 以外的那些偏好（字級、底圖、對焦、子頁籤…）。
+
+   帶的東西裡有兩樣是憑證性質的:
+   - **中央氣象署授權碼**（氣象序號）—— 使用者明確要求要含在備份裡,
+     不含的話換機之後還要自己去翻,那不叫備份。
+   - **開啟密碼的雜湊** —— 帶著,但**匯入時會先問要不要一併還原**;
+     不問就蓋掉的話,還原一份忘了密碼的舊備份會把人鎖在門外。
+
+   所以匯出時畫面上要講清楚這個檔案含授權碼。要給別人看的話,
+   關掉「備份含座標」並不夠 —— 那只擋座標。 */
+const UI_KEYS = ['galepost.ui.ts', 'galepost.ui.tysub', 'galepost.ui.basemap',
+  'galepost.ui.mapfocus', 'galepost.ui.aux', 'galepost.ui.windyfocus'];
 function exportPayload() {
   const d = JSON.parse(JSON.stringify(DB));
   if (!DB.cfg.exportCoords) d.stations.forEach(s => { s.lat = null; s.lng = null; });
-  d.cfg.pin = '';                      // 備份不帶密碼雜湊
-  d.ty.data = null; d.ty.list = [];    // 颱風資料每次重抓即可
-  return d;
+  d.ty.data = null; d.ty.list = [];    // 颱風資料每次重抓即可,備份它只會過期
+  const ui = {};
+  for (const k of UI_KEYS) {
+    try { const v = localStorage.getItem(k); if (v != null) ui[k] = v; } catch (e) {}
+  }
+  return {
+    galepost: 'full1',
+    app: APP_VER,
+    at: new Date().toISOString(),
+    db: d,
+    ui,
+  };
 }
 function download(obj, name) {
   const b = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
@@ -4322,13 +4356,37 @@ function doImport(e) {
         if (!pw) return;
         o = await decryptJSON(o, pw);
       }
-      if (!o || !Array.isArray(o.stations)) throw new Error('不是風哨的備份檔');
+      // 新版是 {galepost:'full1', db:…, ui:…};舊版直接就是 DB 本身,兩種都要接
+      const full = o && o.galepost === 'full1';
+      const body = full ? o.db : o;
+      const ui = full ? (o.ui || {}) : null;
+      if (!body || !Array.isArray(body.stations)) throw new Error('不是風哨的備份檔');
+
+      /* 密碼要不要一併還原,一定要問。不問就蓋掉的話,
+         還原一份忘了密碼的舊備份會把人鎖在門外。 */
       const keepPin = DB.cfg.pin;
+      const bakPin = (body.cfg && body.cfg.pin) || '';
+      let usePin = keepPin;
+      if (bakPin && bakPin !== keepPin) {
+        usePin = confirm('這份備份含開啟密碼。要一併還原成備份裡的密碼嗎？\n\n'
+          + '按「確定」＝改用備份裡的密碼（記不得就會被鎖在外面）\n'
+          + '按「取消」＝保留這台裝置目前的設定') ? bakPin : keepPin;
+      }
+
       const base = blankDB();
-      DB = Object.assign(base, o);
-      DB.cfg = Object.assign(base.cfg, o.cfg || {}); DB.cfg.pin = keepPin;
-      DB.ty = Object.assign(base.ty, o.ty || {});
-      save(); refreshAll(); renderSettings(); syncForm(); toast('備份已匯入');
+      const defCfg = base.cfg, defTy = base.ty, defTypes = base.types;
+      DB = Object.assign(base, body);
+      DB.cfg = Object.assign({}, defCfg, body.cfg || {}); DB.cfg.pin = usePin;
+      DB.ty = Object.assign({}, defTy, body.ty || {});
+      if (!Array.isArray(DB.types) || !DB.types.length) DB.types = defTypes;
+      if (ui) {
+        for (const k of UI_KEYS) {
+          if (ui[k] == null) continue;
+          try { localStorage.setItem(k, ui[k]); } catch (e) {}
+        }
+      }
+      save(); refreshAll(); renderSettings(); syncForm();
+      toast(full ? '全面備份已匯入，重新整理後套用顯示偏好' : '備份已匯入');
     } catch (err) { toast('匯入失敗：' + (err.message === 'OperationError' ? '密碼錯誤' : err.message)); }
   };
   r.readAsText(f); e.target.value = '';
