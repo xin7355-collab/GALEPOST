@@ -220,6 +220,10 @@ input::placeholder,textarea::placeholder{color:var(--fg4)}
 .tag-off{background:var(--no-d);color:var(--no)}
 .tag-pl{background:transparent;color:var(--fg4);border:1px dashed var(--edge2)}
 .tag-aux{background:var(--aux-d);color:var(--aux)}
+/* 存在但看不到。不能用 display:none —— 那會讓部分 Android WebView
+   拒絕程式觸發的 .click()。 */
+.offscreen{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;
+  left:-9999px;overflow:hidden}
 /* 全臺表的分組標題（西部／東部／外離島）。離島夾在本島中間會讓
    「從上往下找自己的縣市」那條線斷掉,所以分組,組內才照緯度由北至南。 */
 .cgrp{font-family:var(--mono);font-size:0.6875rem;letter-spacing:.12em;color:var(--fg4);
@@ -1059,7 +1063,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v29';
+const APP_VER = 'v30';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -4244,7 +4248,27 @@ function renderSettings() {
       要給別人請用「加密匯出」。</b>開啟密碼也在裡面，但匯入時會先問要不要一併還原。</p>
     <div class="btnrow" style="margin-top:0.5rem">
       <button class="btn dg wide" id="c_wipe">清除本機全部資料</button></div>
-    <input type="file" id="c_file" accept=".json" hidden>
+    <!-- 不設 accept:Android 的檔案選擇器是照 **MIME** 過濾的,不是照副檔名。
+         瀏覽器下載下來的備份常被記成 application/octet-stream 或 text/plain,
+         一設 accept=".json" 那些檔案就變灰的、點不下去 —— 看起來就像「無法匯入」。
+         也不用 hidden:display:none 的 input 在部分 Android WebView
+         （LINE、其他 App 內建瀏覽器）上,程式呼叫 .click() 不會開啟選擇器。
+         改成移到畫面外但仍然存在。 -->
+    <input type="file" id="c_file" class="offscreen">
+    ${IMPORT_ERR ? `<div class="msg e" style="margin-top:0.5rem">上次匯入失敗：${esc(IMPORT_ERR)}</div>` : ''}
+    <details style="margin-top:0.5rem">
+      <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
+        選不到檔案？改用「貼上備份內容」</summary>
+      <p class="hint" style="margin:0.375rem 0">Android 的檔案選擇器有時候會把備份檔變成灰色點不下去
+        （它是照檔案的 MIME 判斷，不是照副檔名，而下載下來的檔案常被記成一般二進位檔）。
+        遇到這種情況，用任何文字編輯器或檔案管理員把備份檔打開、<b>全選複製</b>，貼在這裡即可。
+        加密備份也可以直接貼。</p>
+      <textarea id="c_paste" rows="4" placeholder="貼上備份檔的內容（以 { 開頭）…"
+        spellcheck="false" style="font-family:var(--mono);font-size:0.75rem"></textarea>
+      <div class="btnrow" style="margin-top:0.375rem">
+        <button class="btn pri sm" id="c_pasteGo">套用貼上的備份</button>
+      </div>
+    </details>
   </div>
 
   <div class="sec"><h2>蒲福風級對照</h2></div>
@@ -4298,6 +4322,14 @@ function renderSettings() {
   $('#c_expE').onclick = () => doExport(true);
   $('#c_imp').onclick = () => $('#c_file').click();
   $('#c_file').onchange = doImport;
+  {
+    const go = $('#c_pasteGo');
+    if (go) go.onclick = () => {
+      const v = ($('#c_paste').value || '').trim();
+      if (!v) return toast('請先貼上備份內容');
+      applyBackupText(v);
+    };
+  }
   $('#c_wipe').onclick = () => {
     if (!confirm('清除本機全部資料，包含所有站臺、座標、設定與日誌。此動作無法復原，確定？')) return;
     if (!confirm('再次確認：已經匯出備份了嗎？')) return;
@@ -4426,11 +4458,44 @@ function adoptType(t) {
 }
 
 function doImport(e) {
-  const f = e.target.files[0]; if (!f) return;
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
   const r = new FileReader();
-  r.onload = async () => {
-    try {
-      let o = JSON.parse(r.result);
+  r.onerror = () => importFail(new Error('讀不到這個檔案，請改用「貼上備份內容」'));
+  r.onload = () => applyBackupText(String(r.result));
+  r.readAsText(f);
+  e.target.value = '';
+}
+
+function importFail(err) {
+  const m = err && err.message === 'OperationError' ? '密碼錯誤' : (err && err.message) || String(err);
+  IMPORT_ERR = m;
+  toast('匯入失敗：' + m);
+  renderSettings();
+}
+let IMPORT_ERR = '';
+
+/* 檔案與「貼上」共用同一條路。
+   BOM 一定要去掉 —— Android 上經過某些 App 轉手的檔案會多一個 \uFEFF,
+   JSON.parse 會直接丟 "Unexpected token",看起來就像備份壞了。 */
+async function applyBackupText(raw) {
+  try {
+    const txt = String(raw || '').replace(/^\uFEFF/, '').trim();
+    if (!txt) throw new Error('檔案是空的');
+    let o;
+    try { o = JSON.parse(txt); }
+    catch (e) { throw new Error('不是有效的 JSON（檔案可能被改過或只複製到一半）'); }
+    IMPORT_ERR = '';
+    await applyBackup(o);
+  } catch (err) { importFail(err); }
+}
+
+/* 錯誤一律往上丟給 applyBackupText 統一處理,這裡不自己吞掉 ——
+   兩層各接一次的話,訊息會被講兩遍或漏掉一遍。 */
+async function applyBackup(oIn) {
+  {
+    {
+      let o = oIn;
       if (o && o.galepost === 'enc1') {
         const pw = prompt('這是加密備份，請輸入密碼：');
         if (!pw) return;
@@ -4520,9 +4585,8 @@ function doImport(e) {
       applyUI();
       save(); refreshAll(); renderSettings(); syncForm();
       toast(full ? '全面備份已匯入，重新整理後套用顯示偏好' : '備份已匯入');
-    } catch (err) { toast('匯入失敗：' + (err.message === 'OperationError' ? '密碼錯誤' : err.message)); }
-  };
-  r.readAsText(f); e.target.value = '';
+    }
+  }
 }
 
 /* ── 密碼鎖 ──────────────────────────────────────────── */
