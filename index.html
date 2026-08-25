@@ -1063,7 +1063,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v30';
+const APP_VER = 'v31';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2382,8 +2382,8 @@ function ctlCard() {
   const c = DB.ctl || {};
   if (!ctlOn()) {
     return `<div class="card pad" style="margin-bottom:0.75rem">
-      <div class="sw"><div class="sw-t"><b>尚未開始管制</b>
-        <small>${c.end ? `上次管制 ${fmtShort(c.start)} – ${fmtShort(c.end)}` :
+      <div class="sw"><div class="sw-t"><b>${c.end ? '管制已結束' : '尚未開始管制'}</b>
+        <small>${c.end ? `上次管制 ${fmtShort(c.start)} – ${fmtShort(c.end)}　下方為該期間的紀錄` :
           '設備平常就是開機，那是常態不是動作，所以時序是空的'}</small></div>
         <button class="btn pri sm" onclick="startCtl()">開始管制</button></div></div>`;
   }
@@ -2402,20 +2402,29 @@ function renderRail() {
     if (!st) return fType === 'all';             // 已刪除的站臺:全部類別時仍列出
     return IS_LIVE(st) && (fType === 'all' || st.type === fType) && (inReport(st) || fAux);
   };
+  /* 上面那張卡與這裡必須講同一件事。以前這裡只看 `c.start`,
+     管制結束之後卡片寫「尚未開始管制」、時序卻寫「本次管制自 05:57 起」,
+     同一個畫面自相矛盾。改成三種狀態各自講各自的話。 */
   const c = DB.ctl || {};
+  const on = ctlOn();
   if (!c.start) {
     return `<div class="msg i">尚未開始管制，因此沒有紀錄。
       設備平常就是開機，那是<b>常態</b>不是動作——按上方「開始管制」之後，
       每一次開機／待機／關機才會記進本次時序與回報。</div>`;
   }
   const from = c.start, to = c.end || Infinity;
+  const label = on ? `本次管制自 ${fmtShort(from)} 起`
+    : `上次管制 ${fmtShort(from)} – ${fmtShort(c.end)}`;
   const evs = (DB.log || [])
     .filter(e => e && e.at >= from - 3600000 && e.at <= to && inView(e.name))
     .sort((a, b) => b.at - a.at);
   if (!evs.length) {
-    return `<div class="msg i">本次管制自 ${fmtShort(from)} 起，目前還沒有任何狀態變更。</div>`;
+    return `<div class="msg i">${label}，${on ? '目前還沒有任何狀態變更' : '期間沒有任何狀態變更'}。${
+      on ? '' : '要開始新的一輪，請按上方「開始管制」。'}</div>`;
   }
-  let html = '<div class="rail">', day = '';
+  const head = on ? '' : `<div class="msg i" style="margin-bottom:0.5rem">以下是${label}的紀錄。
+    要開始新的一輪，請按上方「開始管制」。</div>`;
+  let html = head + '<div class="rail">', day = '';
   for (const e of evs) {
     const st = nameOf(e.name);
     const d = new Date(e.at), dk = `${d.getMonth() + 1}/${d.getDate()}`;
@@ -4236,6 +4245,14 @@ function renderSettings() {
       <button class="btn" id="c_expE">加密匯出</button>
       <button class="btn" id="c_imp">匯入備份</button>
     </div>
+    <!-- 完全不經過檔案系統的一條路:這一台複製、那一台貼上。
+         Android 的下載／選擇器出任何問題,這條都還走得通。 -->
+    <div class="btnrow" style="margin-top:0.375rem">
+      <button class="btn sm" id="c_copy">複製備份內容</button>
+      <button class="btn sm" id="c_show">顯示備份內容</button>
+    </div>
+    <textarea id="c_out" rows="3" readonly class="offscreen"
+      style="font-family:var(--mono);font-size:0.6875rem"></textarea>
     <p class="hint" style="margin-top:0.5rem"><b>全部（完整備份）</b>：站臺、類別、設備類別設定、
       紀錄、本次管制、回報用語、管制門檻，以及<b>中央氣象署授權碼</b>與停班停課來源網址，
       連字級、底圖、對焦這些顯示偏好都一起帶走，換手機直接還原。<br>
@@ -4318,6 +4335,33 @@ function renderSettings() {
   bindToggle('#c_auto', () => c.auto, v => { c.auto = v; save(); setAuto(v); });
   bindToggle('#c_expc', () => c.exportCoords, v => { c.exportCoords = v; save(); });
   bind('#c_scope', e => { expScope = e.target.value; });
+  {
+    /* 產生目前範圍的備份文字。複製失敗（權限、非安全內容）時
+       就把它顯示出來讓人自己長按全選 —— 不要只丟一句「複製失敗」。 */
+    const text = () => JSON.stringify(exportPayload(expScope), null, 2);
+    const reveal = t => {
+      const ta = $('#c_out');
+      ta.value = t;
+      ta.classList.remove('offscreen');
+      ta.style.width = '100%';
+      ta.rows = 6;
+      ta.focus(); ta.select();
+    };
+    const cp = $('#c_copy');
+    if (cp) cp.onclick = async () => {
+      const t = text();
+      try {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('no clipboard');
+        await navigator.clipboard.writeText(t);
+        toast(`已複製「${scopeName(expScope)}」備份（${t.length} 字元）`);
+      } catch (e) {
+        reveal(t);
+        toast('這個瀏覽器不允許自動複製，已顯示內容請長按全選');
+      }
+    };
+    const sh = $('#c_show');
+    if (sh) sh.onclick = () => { reveal(text()); toast('已顯示，可長按全選複製'); };
+  }
   $('#c_exp').onclick = () => doExport(false);
   $('#c_expE').onclick = () => doExport(true);
   $('#c_imp').onclick = () => $('#c_file').click();
@@ -4408,12 +4452,28 @@ function exportPayload(scope) {
   return { galepost: 'full1', app: APP_VER, at: new Date().toISOString(), scope: info, db: d, ui };
 }
 
+/* 下載。錨點**一定要先掛進文件**再 click ——
+   沒掛進去的 <a> 在 Firefox 與部分 Android 瀏覽器上點了不會有反應,
+   或是產生一個 0 位元組的檔案;那個檔案再拿去匯入,
+   看到的就是「不是有效的 JSON」。 */
 function download(obj, name) {
-  const b = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(b); a.download = name; a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+  const text = JSON.stringify(obj, null, 2);
+  LAST_EXPORT = text;                 // 下載不成功時,還能用「複製備份內容」帶走
+  try {
+    const b = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(b);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
+  } catch (e) {
+    toast('這個瀏覽器擋下了下載，請改用「複製備份內容」');
+  }
+  renderSettings();
 }
+let LAST_EXPORT = '';
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
 // 檔名帶上範圍 —— 三個檔案都叫「風哨備份」的話,要還原時分不出哪個是哪個
 const scopeName = sc => sc === 'all' ? '完整'
@@ -4481,10 +4541,19 @@ let IMPORT_ERR = '';
 async function applyBackupText(raw) {
   try {
     const txt = String(raw || '').replace(/^\uFEFF/, '').trim();
-    if (!txt) throw new Error('檔案是空的');
+    if (!txt) throw new Error('讀到的內容是空的（0 個字元）——檔案可能是空檔或下載沒完成');
     let o;
     try { o = JSON.parse(txt); }
-    catch (e) { throw new Error('不是有效的 JSON（檔案可能被改過或只複製到一半）'); }
+    catch (e) {
+      /* 光說「不是有效的 JSON」沒辦法排查。把**實際讀到什麼**講出來:
+         長度、開頭幾個字。是 HTML 就是下載到錯誤頁,是空白就是檔案沒寫成功,
+         看起來像 JSON 但斷在中間就是只複製到一半。 */
+      const head = txt.slice(0, 60).replace(/\s+/g, ' ');
+      const kind = /^</.test(txt) ? '這看起來是一個網頁（HTML），不是備份檔'
+        : /^\{|^\[/.test(txt) ? '開頭是 JSON，但中途斷掉——可能只複製到一半'
+        : '開頭不是 { 或 [，這不像備份檔';
+      throw new Error(`${kind}。讀到 ${txt.length} 個字元，開頭是「${head}」`);
+    }
     IMPORT_ERR = '';
     await applyBackup(o);
   } catch (err) { importFail(err); }
