@@ -1063,7 +1063,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v31';
+const APP_VER = 'v32';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1854,7 +1854,88 @@ function windAt(snap, p) {
     const b = bearing(snap.pos, p);
     v += 0.5 * snap.mvSpd / 3.6 * Math.cos(rad(b - snap.mv - 90));
   }
-  return { ms: Math.max(v, 0), bf: ms2bf(Math.max(v, 0)), km: r, brg: bearing(snap.pos, p) };
+  const brg = bearing(snap.pos, p);
+  /* 風「從哪個方向來」。北半球是逆時針環流:在中心東側(θ=90°)空氣往北走,
+     所以移動方向 ≈ θ−90°,再加上約 20° 的向心內流,風來向 = 移動方向+180 ≈ θ+110°。
+     這個角度只用來分「哪一個象限」,校正與套用兩邊用同一條式子,
+     就算內流角估得不準,分箱仍然一致。 */
+  const dirFrom = ((brg + 110) % 360 + 360) % 360;
+  return { ms: Math.max(v, 0), bf: ms2bf(Math.max(v, 0)), km: r, brg, dirFrom };
+}
+
+/* ═══ 站臺風力校正 ═══════════════════════════════════════
+   問題:渦旋模型算的是**海面上的持續風**,沒有地形。
+   真正的地形修正要有地形追隨的邊界層模式與地形高程資料,
+   那不是一支單檔前端程式做得到的事,硬做只會做出一個看起來很準的假數字。
+
+   做得到而且有用的是另一件事:**拿這個站自己的實測去學它的偏差**。
+   每次更新時,同一個地點同時有「模型推估」與「最近測站實測」,
+   兩者的比值就是這個站的**地形／曝風修正係數**。把它平滑地累積起來,
+   之後的推估就乘上去 —— 這是作業上常用的偏差校正（MOS 的精神）,
+   不是憑空猜一個地形參數。
+
+   為什麼要分方位:同一個站,吹北風時被山擋住、吹南風時整片敞開,
+   係數可以差一倍。颱風經過時風向會轉一大圈,剛好把各方位都學到。
+
+   這修得掉的是**系統性偏差**（曝風、遮蔽、測站高度）。
+   修不掉的是路徑誤差造成的時間偏移,以及複雜地形裡的瞬間陣風 ——
+   所以畫面上仍然要並列實測,並保留「推估差 N 級」那個警告。      */
+const CAL_MIN_MS = 5;        // 推估低於這個值不學:分母太小,比值全是雜訊
+const CAL_MAX_KM = 25;       // 學習用的測站要比顯示用的(60 km)更近
+const CAL_ALPHA = 0.25;      // 指數移動平均的權重
+const CAL_MIN_N = 3;         // 樣本不足就不套用,寧可用未校正的原值
+const CAL_LO = 0.35, CAL_HI = 1.8;   // 超出這個範圍多半是配錯測站,不是地形
+const OCT = d => Math.round((((d % 360) + 360) % 360) / 45) % 8;
+const OCT_NAME = ['北', '東北', '東', '東南', '南', '西南', '西', '西北'];
+
+function calOf(st) {
+  if (!st.cal || typeof st.cal !== 'object') st.cal = { k: 1, n: 0, at: 0, dir: [] };
+  if (!Array.isArray(st.cal.dir)) st.cal.dir = [];
+  return st.cal;
+}
+/* 取這個站在某個風向下該乘的係數。方位樣本夠就用方位的,
+   不夠退回整體的,再不夠就回 1（＝不校正）。 */
+function calFactor(st, dirFrom) {
+  if (!st || st.calOff) return 1;
+  if (Number.isFinite(st.calManual) && st.calManual > 0) return clamp(st.calManual, CAL_LO, CAL_HI);
+  const c = st.cal;
+  if (!c) return 1;
+  if (Number.isFinite(dirFrom) && Array.isArray(c.dir)) {
+    const d = c.dir[OCT(dirFrom)];
+    if (d && d.n >= CAL_MIN_N) return clamp(d.k, CAL_LO, CAL_HI);
+  }
+  return (c.n >= CAL_MIN_N) ? clamp(c.k, CAL_LO, CAL_HI) : 1;
+}
+
+/* 每次拿到新的實測就學一次。只在「模型與實測都有意義」時才學。 */
+function calibrateStations() {
+  if (!SERIES || !SERIES.length || !OBS.length) return 0;
+  const now = SERIES[0];
+  let learned = 0;
+  for (const st of DB.stations) {
+    if (!IS_LIVE(st) || !Number.isFinite(st.lat) || !Number.isFinite(st.lng)) continue;
+    const ob = nearestIn(OBS, st);
+    if (!ob || ob.km > CAL_MAX_KM || ob.o.wind == null) continue;
+    const w = windAt(now, { lat: st.lat, lng: st.lng });
+    if (!(w.ms >= CAL_MIN_MS)) continue;            // 風太小,比值沒有意義
+    const ratio = clamp(ob.o.wind / w.ms, CAL_LO, CAL_HI);
+    const c = calOf(st);
+    // 同一筆觀測時刻不要重複學（按兩次更新不該讓係數跑兩步）
+    if (c.at && OBS_AT && c.at === OBS_AT) continue;
+    c.k = c.n ? c.k + CAL_ALPHA * (ratio - c.k) : ratio;
+    c.n++;
+    c.at = OBS_AT || Date.now();
+    c.km = Math.round(ob.km);
+    c.src = ob.o.name;
+    const i = OCT(w.dirFrom);
+    const d = c.dir[i] || { k: ratio, n: 0 };
+    d.k = d.n ? d.k + CAL_ALPHA * (ratio - d.k) : ratio;
+    d.n++;
+    c.dir[i] = d;
+    learned++;
+  }
+  if (learned) save();
+  return learned;
 }
 
 /* ═══ 警報預判 ═══════════════════════════════════════════
@@ -1889,7 +1970,14 @@ function predictWarnings(series, seaBuf) {
 function stationImpact(series, st, cfg) {
   if (!Number.isFinite(st.lat) || !Number.isFinite(st.lng)) return null;
   const p = { lat: st.lat, lng: st.lng };
-  const curve = series.map(s => ({ t: s.t, h: s.h, ...windAt(s, p) }));
+  /* 每個時刻各自依「那個時刻的風向」取係數 —— 颱風經過時風向會轉一大圈,
+     用同一個係數套整條曲線,等於假設它從頭到尾都吹同一個方向。 */
+  const curve = series.map(s => {
+    const w = windAt(s, p);
+    const k = calFactor(st, w.dirFrom);
+    const ms = w.ms * k;
+    return { t: s.t, h: s.h, ...w, ms, bf: ms2bf(ms), k };
+  });
   const now = curve[0];
   let peak = curve[0];
   for (const c of curve) if (c.bf > peak.bf) peak = c;
@@ -1909,6 +1997,7 @@ function stationImpact(series, st, cfg) {
     now, peak, shut, emerg, resume,
     deadline: shut ? shut.t - cfg.leadMin * 60000 : null,   // 應於此時前完成關機
     km: Math.round(now.km), brg: now.brg,
+    k: now.k, cal: st.cal || null, calManual: st.calManual, calOff: !!st.calOff,
   };
 }
 
@@ -2070,6 +2159,7 @@ async function loadTyphoon(manual) {
     // ① 站臺端靜態資料：不需要任何人自備授權碼，優先用
     const stat = await fetchStatic();
     await obsP;                       // 上面已經在跑了,這裡只是收線
+    // 實測進來了,但 SERIES 還要等路徑解析完;真正的學習在下面 rebuildModel 之後
     if (stat) {
       DB.ty.warning = stat.warning || null;
       if (stat.typhoons.length) {
@@ -2120,7 +2210,11 @@ async function loadTyphoon(manual) {
     // 以前只在「空的」時候才設,結果從 GDACS 換到氣象署資料之後,
     // 名字還停在 GDACS 的 NARRA-26,畫面上跟實際那顆對不起來。
     if (!DB.ty.nameEdited) DB.ty.name = DB.ty.data.name;
-    save(); rebuildModel(); renderTyphoon({ note });
+    save(); rebuildModel();
+    /* 路徑與實測都到齊了才學得動:要有 SERIES（模型）也要有 OBS（實測）。
+       學完再畫,畫面上看到的就是校正後的推估。 */
+    calibrateStations();
+    renderTyphoon({ note });
     renderStations(); syncForm(); generate();
   } catch (e) {
     renderTyphoon({ error: e.message });
@@ -2316,6 +2410,10 @@ function stationCard(s, imp, i, total) {
   // 否則看的人無從判斷這個數字能不能代表自己的現場。
   const ob = nearestObs(s), obf = obsBf(ob);
   if (obf != null) meta.push(`實測 ${bfLabel(obf)}　${esc(ob.o.name)} ${Math.round(ob.km)} km`);
+  // 有在校正就講出來 —— 使用者要知道畫面上的推估已經不是原始模型值
+  if (imp && imp.k != null && Math.abs(imp.k - 1) > 0.02) {
+    meta.push(`<span style="color:var(--acc)">地形校正 ×${imp.k.toFixed(2)}</span>`);
+  }
   // 颱風致災常常是雨先出事,山區站臺尤其如此,所以雨量跟風擺在一起看。
   const rb = nearestRain(s);
   if (rb && rb.o.h24 != null) {
@@ -3395,13 +3493,27 @@ function rainHint() {
     + '其餘縣市拿實測去比只是參考。達標仍須地方政府依致災情形研判。</b>';
 }
 
+function calSummary() {
+  const live = DB.stations.filter(s => IS_LIVE(s) && s.cal && s.cal.n >= CAL_MIN_N);
+  if (!live.length) return '';
+  const ks = live.map(s => s.cal.k);
+  return `已有 <b>${live.length}</b> 站累積出地形校正係數`
+    + `（×${Math.min(...ks).toFixed(2)}–×${Math.max(...ks).toFixed(2)}）。`;
+}
+
 function obsHint() {
   if (!OBS.length) return '目前沒有觀測資料，實測欄為 —。';
   return `取 ${OBS_MAX_KM} km 內最近測站（${OBS.length} 站，${OBS_AT ? fmtShort(OBS_AT) : '—'}）。`
     + `<b>「距關機門檻 N 級」是實測風力離建議關機門檻（${DB.cfg.bfShut} 級）還差幾級</b>，`
     + '這是要做決定的那個數字。'
     + '<b style="color:var(--sb)">另標「推估差 N 級」時代表模型與實測差三級以上，'
-    + '該站的推估時間不可信，請以現場為準。</b>';
+    + '該站的推估時間不可信，請以現場為準。</b>'
+    + `<br><b>地形校正</b>：模型算的是海面持續風、沒有地形，所以程式會拿<b>這個站自己的實測</b>`
+    + `跟推估相比，把比值累積成該站的校正係數（依風向分八個方位各學一組，`
+    + `每個方位滿 ${CAL_MIN_N} 筆才套用），之後的推估與關機時間都乘上去。`
+    + `這修得掉的是曝風、遮蔽、測站高度這類<b>系統性偏差</b>；`
+    + `修不掉的是路徑誤差造成的時間偏移，以及複雜地形裡的瞬間陣風。`
+    + `${calSummary()}`;
 }
 
 function renderForecast() {
@@ -3974,6 +4086,24 @@ function openStation(id) {
         <input type="number" id="f_hum" min="0" max="100" value="${s && s.hum != null ? s.hum : ''}" placeholder="未量測"></label>
       <label class="fld"><span class="lb">備註</span>
         <input type="text" id="f_note" value="${esc(s ? s.note : '')}" placeholder="選填"></label></div>
+    ${s ? (() => {
+      const c = s.cal || {};
+      const dirs = (c.dir || []).map((d, i) => d && d.n ? `${OCT_NAME[i]} ×${d.k.toFixed(2)}（${d.n}）` : '')
+        .filter(Boolean).join('、');
+      return `<label class="fld"><span class="lb">地形校正</span>
+        <input type="text" id="f_cal" value="${Number.isFinite(s.calManual) ? s.calManual : ''}"
+          inputmode="decimal" placeholder="${c.n >= CAL_MIN_N ? `自動 ×${c.k.toFixed(2)}` : '自動（樣本不足，暫不校正）'}">
+        <span class="sub">推估風力會乘上這個係數。程式會拿這個站附近 ${CAL_MAX_KM} km 內測站的實測
+          跟推估相比，自動累積出係數${c.n ? `——目前 <b>${c.n}</b> 筆，整體 ×${c.k.toFixed(2)}${
+            c.src ? `（最近取 ${esc(c.src)} ${c.km} km）` : ''}` : '，目前還沒有樣本'}。
+          ${dirs ? `各方位：${dirs}。` : ''}
+          填數字可手動覆寫（${CAL_LO}–${CAL_HI}），留空則用自動值。</span></label>
+      <div class="sw" style="margin-bottom:0.875rem"><div class="sw-t"><b>停用校正</b>
+        <small>只用原始模型值，不做任何修正</small></div>
+        <button class="tgl" id="f_caloff" aria-pressed="${!!s.calOff}"></button></div>
+      ${c.n ? `<div class="btnrow" style="margin:-0.5rem 0 0.875rem">
+        <button class="btn sm" id="f_calreset">清除已學到的係數</button></div>` : ''}`;
+    })() : ''}
     <label class="fld"><span class="lb">停班停課雨量基準</span>
       <select id="f_terr">
         <option value="">依類別（${s ? TERRAIN[terrainOf(s)].thr : DGPA_FLAT} mm）</option>
@@ -4003,6 +4133,20 @@ function openStation(id) {
           p => { $('#f_ll').value = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`; show(); },
           () => toast('取得定位失敗，請確認已允許定位權限'), { enableHighAccuracy: true, timeout: 10000 });
       };
+      if (s) {
+        const off = $('#f_caloff');
+        if (off) off.onclick = () => {
+          s.calOff = off.getAttribute('aria-pressed') !== 'true';
+          off.setAttribute('aria-pressed', String(s.calOff));
+          save(); rebuildModel(); renderStations(); renderTyphoon({});
+        };
+        const rst = $('#f_calreset');
+        if (rst) rst.onclick = () => {
+          s.cal = { k: 1, n: 0, at: 0, dir: [] };
+          save(); rebuildModel(); renderStations(); renderTyphoon({}); closeSheet();
+          toast('已清除該站的校正係數');
+        };
+      }
       $('#f_save').onclick = () => {
         const name = $('#f_name').value.trim();
         if (!name) return toast('請填站臺名稱');
@@ -4018,6 +4162,11 @@ function openStation(id) {
           note: $('#f_note').value.trim(),
           terrain: $('#f_terr').value || null,
         };
+        const calIn = $('#f_cal');
+        if (calIn) {
+          const v = parseFloat(calIn.value);
+          d.calManual = Number.isFinite(v) && v > 0 ? clamp(v, CAL_LO, CAL_HI) : null;
+        }
         if (s) { if (s.status !== d.status) DB.log.push({ t: Date.now(), name, from: s.status, to: d.status, at: d.at }); Object.assign(s, d); }
         else { DB.stations.push(Object.assign({ id: uid() }, d)); DB.log.push({ t: Date.now(), name, from: null, to: d.status, at: d.at }); }
         save(); rebuildModel(); renderStations(); renderTyphoon({}); renderSettings(); closeSheet(); toast('已儲存');
@@ -4163,6 +4312,12 @@ function renderSettings() {
 
   <div class="sec"><h2>管制門檻</h2></div>
   <div class="card pad" style="margin-bottom:1.125rem">
+    ${c.bfEmerg <= c.bfShut ? `<div class="msg w" style="margin-bottom:0.625rem">
+      緊急關機門檻（${c.bfEmerg} 級）<b>不高於</b>建議關機門檻（${c.bfShut} 級）——
+      兩者會同時觸發，「緊急」那一級等於沒有作用。建議把緊急調高一到兩級。</div>` : ''}
+    ${c.bfResume >= c.bfShut ? `<div class="msg w" style="margin-bottom:0.625rem">
+      可復機上限（${c.bfResume} 級）<b>不低於</b>建議關機門檻（${c.bfShut} 級）——
+      會出現「剛達到關機門檻、同時又建議可以復機」的矛盾。建議把復機調低。</div>` : ''}
     <label class="fld"><span class="lb">建議關機風級</span>${bfSel('c_bfShut', c.bfShut)}
       <span class="sub">預估現場風力達此級數時，站臺卡會提示應完成關機。</span></label>
     <label class="fld"><span class="lb">緊急關機風級</span>${bfSel('c_bfEmerg', c.bfEmerg)}
