@@ -670,6 +670,10 @@ const DGPA_URL = 'https://www.dgpa.gov.tw/typh/daily/nds.html';
    設定頁可以改成自己的代理,或整段留空只看連結。               */
 const DGPA_PROXY_DEFAULT = 'https://proxy.aliceric27.workers.dev/?url=';
 
+/* 鄉鎮天氣預報的資料集代號。跟上面一樣要放在 blankDB() 之前,否則 TDZ。 */
+const WX_3H_DEFAULT = 'F-D0047-089';    // 臺灣各鄉鎮未來 2 天(逐 3 小時)天氣預報
+const WX_WK_DEFAULT = 'F-D0047-091';    // 臺灣各鄉鎮未來 1 週天氣預報
+
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const p2 = n => String(n).padStart(2, '0');
@@ -703,6 +707,8 @@ function blankDB() {
       cwaKey: '', auto: false, dgpaUrl: '', dgpaProxy: DGPA_PROXY_DEFAULT,
       bfShut: 8, bfEmerg: 10, bfResume: 6, humMax: 70, leadMin: 60,
       sort: 'ns', listSort: 'ns', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
+      // 鄉鎮天氣預報資料集代號。留空 = 不抓那一支。
+      wx3h: WX_3H_DEFAULT, wxWk: WX_WK_DEFAULT,
     },
     /* ctl：本次管制期間。start=0 代表還沒開始管制。
        沒有這個概念的話,站臺的 at（「從什麼時候開始是這個狀態」）會被當成
@@ -1063,7 +1069,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v32';
+const APP_VER = 'v33';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1410,6 +1416,172 @@ function walkAdvisory(node, loc, end, out) {
 
 /* 資料集順序:-002「各別天氣警特報之內容及所影響之區域」欄位最完整,
    -003 是豪大雨專用,-001 是各縣市目前的警特報。取到雨類特報就停。  */
+/* ── 鄉鎮天氣預報 ────────────────────────────────────────
+   使用者要「是否下雨」到小時等級、還有未來三天。三件事分開處理:
+
+   **現在下不下雨**:不用預報,用**自動雨量站的 10 分鐘累積**（已經在抓了）。
+   那是實測,解析度就是 10 分鐘,比任何預報都準。
+
+   **未來 0–3 小時**:Open Data **沒有**逐時降雨預報。真正的臨近預報要靠
+   雷達回波外推,那在「實況」頁的 Windy 雷達圖層。
+   **不把 3 小時的預報內插成 1 小時** —— 天氣現象是類別欄位,內插就是編造,
+   那正是抓 W-C0034-003 的同一種錯。
+
+   **未來 2–3 天**:鄉鎮天氣預報,逐 3 小時（2 天）+ 1 週（12 小時一格）。
+   照原始時距顯示。
+
+   代號做成可改:我在這個開發環境連不到氣象署,**沒辦法驗證這兩支代號**。
+   抓不到時畫面會明講是哪一支失敗、可以到設定改 —— 不會靜靜空白。      */
+let WX = null, WX_AT = 0, WX_ERR = '';
+
+const wxNum = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+
+/* 氣象署的時間字串有兩種寫法:新版是 2026-08-26T12:00:00+08:00,
+   舊版是 2026-08-26 12:00:00（沒有時區）。後者直接丟給 Date.parse,
+   會被當成「裝置的本地時間」—— 裝置不在臺灣時區就整條時間軸偏掉。
+   資料本身一定是臺灣時間,所以沒有時區就補 +08:00。 */
+function wxTime(v) {
+  if (!v) return NaN;
+  let x = String(v).trim().replace(' ', 'T');
+  if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(x)) x += '+08:00';
+  const t = Date.parse(x);
+  return Number.isFinite(t) ? t : Date.parse(String(v));
+}
+
+/* 一個鄉鎮的預報。新版是 Locations/Location/WeatherElement/Time/ElementValue,
+   舊版是 locations/location/weatherElement/time/elementValue,兩種都接。 */
+function parseTownFc(j) {
+  const recs = (j && j.records) || {};
+  const locsWrap = toArr(pick(recs, 'Locations', 'locations'));
+  const out = [];
+  const grab = wrap => {
+    for (const L of toArr(pick(wrap, 'Location', 'location'))) {
+      const name = pick(L, 'LocationName', 'locationName');
+      if (!name) continue;
+      const lat = wxNum(pick(L, 'Latitude', 'lat')), lng = wxNum(pick(L, 'Longitude', 'lon', 'lng'));
+      const els = {};
+      for (const E of toArr(pick(L, 'WeatherElement', 'weatherElement'))) {
+        const en = String(pick(E, 'ElementName', 'elementName') || '');
+        if (!en) continue;
+        const times = toArr(pick(E, 'Time', 'time')).map(T => {
+          const from = pick(T, 'StartTime', 'startTime', 'DataTime', 'dataTime');
+          const to = pick(T, 'EndTime', 'endTime');
+          const ev = toArr(pick(T, 'ElementValue', 'elementValue'))[0] || {};
+          // 新版每個欄位有自己的鍵名;舊版一律叫 value
+          const v = pick(ev, 'Weather', 'WeatherDescription', 'ProbabilityOfPrecipitation',
+            'Temperature', 'RelativeHumidity', 'WindSpeed', 'WindDirection', 'BeaufortScale',
+            'MaxTemperature', 'MinTemperature', 'value');
+          return { from: from ? wxTime(from) : NaN, to: to ? wxTime(to) : NaN,
+            v: v == null ? '' : String(v),
+            code: String(pick(ev, 'WeatherCode', 'weatherCode') || '') };
+        }).filter(x => Number.isFinite(x.from));
+        els[en] = times;
+      }
+      if (Object.keys(els).length) out.push({ name: String(name), lat, lng, els });
+    }
+  };
+  if (locsWrap.length) locsWrap.forEach(grab); else grab(recs);
+  return out;
+}
+
+/* 欄位名稱在不同資料集之間不一樣,依序找第一個有東西的。 */
+const wxEl = (t, ...names) => {
+  for (const n of names) {
+    for (const k of Object.keys(t.els)) {
+      if (k === n || k.includes(n)) { if (t.els[k] && t.els[k].length) return t.els[k]; }
+    }
+  }
+  return [];
+};
+
+/* 把一個鄉鎮的各欄位併成一條時間序列。以「天氣現象」的時距為主軸 ——
+   降雨機率有時是 3 小時、有時是 6 或 12 小時,以它為主軸會少掉一半的格子。 */
+function townSeries(t) {
+  const wx = wxEl(t, '天氣現象', 'Wx');
+  if (!wx.length) return [];
+  const at = (arr, ts) => {
+    for (const x of arr) {
+      const to = Number.isFinite(x.to) ? x.to : x.from + 3 * 3600000;
+      if (ts >= x.from && ts < to) return x.v;
+    }
+    return '';
+  };
+  const pop = wxEl(t, '降雨機率', 'PoP');
+  const tmp = wxEl(t, '溫度', 'T');
+  const rh = wxEl(t, '相對濕度', 'RH');
+  const ws = wxEl(t, '風速', 'WS');
+  const wd = wxEl(t, '風向', 'WD');
+  return wx.map(x => ({
+    from: x.from,
+    to: Number.isFinite(x.to) ? x.to : x.from + 3 * 3600000,
+    wx: x.v, code: x.code,
+    pop: wxNum(at(pop, x.from)),
+    t: wxNum(at(tmp, x.from)),
+    rh: wxNum(at(rh, x.from)),
+    ws: wxNum(at(ws, x.from)),
+    wd: at(wd, x.from),
+  }));
+}
+
+const isRainy = w => /雨|雷|陣雨|豪|雹/.test(String(w || ''));
+
+async function fetchForecast(key) {
+  const ids = [
+    (DB.cfg.wx3h === undefined ? WX_3H_DEFAULT : DB.cfg.wx3h) || '',
+    (DB.cfg.wxWk === undefined ? WX_WK_DEFAULT : DB.cfg.wxWk) || '',
+  ].filter(Boolean);
+  if (!ids.length) { WX = null; WX_ERR = ''; return; }
+  const errs = [];
+  const towns = new Map();
+  for (const id of ids) {
+    try {
+      const j = await cwaJson(id, key);
+      const list = parseTownFc(j);
+      if (!list.length) { errs.push(`${id}：回應中找不到鄉鎮資料`); continue; }
+      for (const t of list) {
+        const ex = towns.get(t.name);
+        if (!ex) { towns.set(t.name, t); continue; }
+        /* 兩支資料集的同一個鄉鎮。不能只留先到的那一支:
+           逐 3 小時只到 +2 天,一週預報才有第 3 天以後。
+           所以同名欄位要「接續」—— 保留細的那一份,
+           再把後面時間才開始的粗格接到尾巴。 */
+        for (const k of Object.keys(t.els)) {
+          if (!ex.els[k] || !ex.els[k].length) { ex.els[k] = t.els[k]; continue; }
+          const end = Math.max(...ex.els[k].map(x => Number.isFinite(x.to) ? x.to : x.from));
+          const tail = t.els[k].filter(x => x.from >= end);
+          if (tail.length) ex.els[k] = ex.els[k].concat(tail).sort((a, b) => a.from - b.from);
+        }
+        if (ex.lat == null && t.lat != null) { ex.lat = t.lat; ex.lng = t.lng; }
+      }
+    } catch (e) { errs.push(`${id}：${(e && e.message) || e}`); }
+  }
+  if (!towns.size) { WX = null; WX_ERR = errs.join('；') || '沒有取得任何預報'; return; }
+  WX = [...towns.values()];
+  WX_AT = Date.now();
+  WX_ERR = errs.join('；');
+}
+
+/* 站臺對到哪一個鄉鎮:優先用座標找最近的（資料集有給經緯度時）,
+   沒有座標就退回「鄉鎮名稱包含該站所在縣市」的第一筆,再不行就不猜。 */
+function townFor(st) {
+  if (!WX || !WX.length || !st) return null;
+  const withXY = WX.filter(t => Number.isFinite(t.lat) && Number.isFinite(t.lng));
+  if (withXY.length && Number.isFinite(st.lat) && Number.isFinite(st.lng)) {
+    let best = null;
+    for (const t of withXY) {
+      const km = distKm({ lat: st.lat, lng: st.lng }, { lat: t.lat, lng: t.lng });
+      if (!best || km < best.km) best = { t, km };
+    }
+    if (best) return { town: best.t, km: Math.round(best.km), by: '座標' };
+  }
+  const c = cnorm(countyOf(st));
+  if (c) {
+    const hit = WX.find(t => cnorm(t.name).includes(c) || c.includes(cnorm(t.name)));
+    if (hit) return { town: hit, km: null, by: '縣市' };
+  }
+  return null;
+}
+
 const ADV_SETS = ['W-C0033-002', 'W-C0033-003', 'W-C0033-001'];
 
 async function fetchAdvisory(key) {
@@ -2144,15 +2316,19 @@ async function loadTyphoon(manual) {
   // 實測觀測跟颱風路徑是兩件事:就算氣象署現在沒有任何颱風,
   // 「現在各站臺幾級風」還是要看得到。所以先發出去,不等路徑的結果。
   const obsP = key
-    ? Promise.allSettled([fetchObs(key), fetchRain(key), fetchAdvisory(key)])
-        .then(([w, r, a]) => {
+    // fetchForecast 自己會寫 WX / WX_ERR,這裡不取它的回傳值;
+    // 天氣預報抓不到絕對不能連帶讓颱風那條路徑掛掉,所以一律 allSettled。
+    ? Promise.allSettled([fetchObs(key), fetchRain(key), fetchAdvisory(key), fetchForecast(key)])
+        .then(([w, r, a, f]) => {
           OBS = w.status === 'fulfilled' ? w.value : [];
           RAIN = r.status === 'fulfilled' ? r.value : [];
           ADV = a.status === 'fulfilled' ? a.value : [];
+          if (f.status === 'rejected') { WX = null; WX_ERR = String((f.reason && f.reason.message) || f.reason || '天氣預報讀取失敗'); }
           OBS_AT = RAIN_AT = Date.now();
         })
     : Promise.resolve().then(() => {
         OBS = []; RAIN = []; ADV = []; OBS_AT = RAIN_AT = 0;
+        WX = null; WX_AT = 0; WX_ERR = '';
       });
   try {
     let all = [];
@@ -2672,7 +2848,7 @@ function renderTyphoon(o) {
       <div class="ty-nm"><b>${esc(ty.name)}</b>
         <span>${ty.en && ty.en !== ty.name ? esc(ty.en) + '　' : ''}<i style="font-style:normal;font-weight:700;color:${bfColor(bfV)}">${TC_FULL[tcClass(ty.vmax)] || ''}</i>　近中心最大風 ${bfLabel(bfV)}</span></div></div>
     <div class="ty-gr">${g.map(([l, v]) => `<div><b>${esc(v)}</b><small>${l}</small></div>`).join('')}</div>
-  </div>` + warningCard();
+  </div>` + wxCard() + warningCard();
 
   drawMap(ty);
   renderImpact();
@@ -2792,6 +2968,104 @@ function myCounties() {
   const set = new Set();
   for (const x of DB.stations) { if (!IS_LIVE(x)) continue; const c = countyOf(x); if (c) set.add(c); }
   return [...set];
+}
+
+/* ── 天氣 ────────────────────────────────────────────────
+   分三段,因為這三段的資料來源與可信度完全不同:
+   ① **現在**:雨量站的 10 分鐘累積 —— **實測**,不是預報。
+   ② **未來 2 天**:鄉鎮預報逐 3 小時 —— 照原始時距,不內插成 1 小時。
+   ③ **第 3 天起**:1 週預報,12 小時一格,只講早上／晚上。
+   每一段都標明是實測還是預報,這是這支程式一貫的規矩。          */
+function nowRain(st) {
+  const rb = nearestRain(st);
+  if (!rb) return null;
+  const o = rb.o;
+  const m10 = o.now, h1 = o.h1;
+  const raining = (m10 != null && m10 > 0) || (h1 != null && h1 > 0);
+  return { raining, m10, h1, h24: o.h24, name: o.name, km: Math.round(rb.km) };
+}
+
+function wxCard() {
+  // 以第一個有座標的站臺為準;沒有站臺就不顯示 —— 沒有地點的天氣沒有意義
+  const st = DB.stations.find(x => IS_LIVE(x) && Number.isFinite(x.lat))
+    || DB.stations.find(x => IS_LIVE(x));
+  if (!st) return '';
+
+  const head = `<div class="sec"><h2>天氣　${esc(st.name)}</h2></div>`;
+  const rn = nowRain(st);
+  const nowLine = rn
+    ? `<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">
+        <b style="font-size:1.0625rem;color:${rn.raining ? 'var(--acc)' : 'var(--fg2)'}">${
+          rn.raining ? '正在下雨' : '目前沒有下雨'}</b>
+        <span class="mono" style="font-size:0.75rem;color:var(--fg3)">
+          10 分鐘 ${rn.m10 == null ? '—' : rn.m10} mm　時雨 ${rn.h1 == null ? '—' : rn.h1} mm　
+          24 小時 ${rn.h24 == null ? '—' : Math.round(rn.h24)} mm</span>
+        <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">
+          實測　${esc(rn.name)} ${rn.km} km</span></div>`
+    : '<div style="color:var(--fg4)">附近沒有可用的雨量站，無法判斷現在有沒有下雨。</div>';
+
+  const tf = townFor(st);
+  if (!tf) {
+    return head + `<div class="card pad" style="margin-bottom:0.75rem">${nowLine}
+      <div class="msg ${WX_ERR ? 'e' : 'i'}" style="margin:0.625rem 0 0">${
+        WX_ERR ? `預報取得失敗：${esc(WX_ERR)}。資料集代號可在設定「天氣預報來源」修改。`
+        : '尚未取得鄉鎮天氣預報。按颱風頁上方「更新」，或到設定確認授權碼與「天氣預報來源」。'}</div></div>`;
+  }
+
+  const ser = townSeries(tf.town).filter(x => x.to > Date.now());
+  const h48 = ser.filter(x => x.from < Date.now() + 48 * 3600000);
+  const later = ser.filter(x => x.from >= Date.now() + 48 * 3600000);
+
+  const cell = x => {
+    const rain = isRainy(x.wx);
+    const popCol = x.pop == null ? 'var(--fg4)' : x.pop >= 70 ? 'var(--no)' : x.pop >= 30 ? 'var(--sb)' : 'var(--fg3)';
+    return `<tr${rain ? ' style="background:var(--acc-d)"' : ''}>
+      <td class="mono" style="white-space:nowrap">${relDay(x.from)}<br>
+        <span style="color:var(--fg4)">${fmtClock(x.from)}–${fmtClock(x.to)}</span></td>
+      <td style="color:${rain ? 'var(--acc)' : 'var(--fg2)'}">${esc(x.wx || '—')}</td>
+      <td class="mono" style="color:${popCol};font-weight:700;text-align:right">${
+        x.pop == null ? '—' : x.pop + '%'}</td>
+      <td class="mono" style="text-align:right">${x.t == null ? '—' : x.t + '°'}</td>
+      <td class="mono" style="text-align:right;color:var(--fg3)">${
+        x.ws == null ? '—' : bfLabel(ms2bf(x.ws))}</td></tr>`;
+  };
+
+  const table = rows => `<div style="overflow-x:auto"><table class="impact">
+    <tr><th>時段</th><th>天氣</th><th>降雨</th><th>溫度</th><th>風</th></tr>
+    ${rows.map(cell).join('')}</table></div>`;
+
+  // 未來 24 小時直接列出來,24–48 小時收在折疊裡 —— 值班先看的是接下來這一天
+  const soon = h48.filter(x => x.from < Date.now() + 24 * 3600000);
+  const rest = h48.filter(x => x.from >= Date.now() + 24 * 3600000);
+
+  const firstRain = ser.find(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
+  const lead = firstRain
+    ? (isRainy(ser[0] && ser[0].wx) || (ser[0] && ser[0].pop >= 70)
+      ? `<b style="color:var(--acc)">目前時段預報有雨</b>`
+      : `<b style="color:var(--acc)">${relDay(firstRain.from)}${fmtClock(firstRain.from)}</b> 起預報有雨`)
+    : '<span style="color:var(--ok)">未來預報時段內都沒有明顯降雨</span>';
+
+  return head + `<div class="card pad" style="margin-bottom:0.75rem">
+    ${nowLine}
+    <div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid var(--edge)">
+      <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">預報</span>
+      ${lead}
+      <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">
+        　${esc(tf.town.name)}${tf.km != null ? `（${tf.km} km）` : `（依${tf.by}對應）`}</span></div>
+    ${soon.length ? table(soon) : '<div class="msg i" style="margin:0.5rem 0 0">預報時段都已過去，請按上方「更新」。</div>'}
+    ${rest.length ? `<details style="margin-top:0.375rem">
+      <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
+        24–48 小時（${rest.length} 個時段）</summary>${table(rest)}</details>` : ''}
+    ${later.length ? `<details style="margin-top:0.25rem">
+      <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
+        第 3 天以後（${later.length} 個時段，12 小時一格）</summary>${table(later)}</details>` : ''}
+    <p class="hint" style="margin-top:0.5rem">
+      <b>「正在下雨」是雨量站的實測</b>（10 分鐘累積），不是預報。
+      下方是中央氣象署鄉鎮天氣預報，<b>最細就是 3 小時一格</b>——
+      官方沒有逐時降雨預報，把 3 小時內插成 1 小時只是把猜的講得比較細，這裡不做。
+      要看「等一下會不會下」請用<b>實況頁的雷達回波</b>，那才是臨近預報該看的東西。
+      ${WX_ERR ? `<br><b style="color:var(--no)">部分預報取得失敗：${esc(WX_ERR)}</b>` : ''}</p>
+  </div>`;
 }
 
 /* ── 停班停課：官方公告與本機推估合成一張表 ────────────────
@@ -3029,6 +3303,46 @@ function briefText() {
     L.push('降雨特報分級（中央氣象署發布）');
     for (const a of ADV) {
       L.push(`${IN}${a.kind}：${a.areas.length ? a.areas.join('、') : '（未列地區）'}`);
+    }
+  }
+
+  /* ── 天氣 ──
+     現在有沒有在下雨是**實測**（雨量站 10 分鐘累積）,預報是鄉鎮預報**逐 3 小時**。
+     兩件事分開講,不要混在一起 —— 值班回報時「現在」跟「等一下」的責任不一樣。 */
+  {
+    const wst = DB.stations.find(x => IS_LIVE(x) && Number.isFinite(x.lat))
+      || DB.stations.find(x => IS_LIVE(x));
+    const rn = wst ? nowRain(wst) : null;
+    const tf = wst ? townFor(wst) : null;
+    if (rn || tf) {
+      L.push('');
+      L.push(`天氣（${wst.name}）`);
+      if (rn) {
+        L.push(`${IN}目前天候：${rn.raining ? '正在降雨' : '未降雨'}` +
+          `（${rn.name}實測，10 分鐘 ${rn.m10 == null ? '—' : rn.m10} 毫米、` +
+          `時雨量 ${rn.h1 == null ? '—' : rn.h1} 毫米、` +
+          `24 小時累積 ${rn.h24 == null ? '—' : Math.round(rn.h24)} 毫米）。`);
+      }
+      if (tf) {
+        const ser = townSeries(tf.town).filter(x => x.to > Date.now());
+        const cur = ser[0];
+        if (cur) {
+          L.push(`${IN}預報天氣：${cur.wx || '—'}` +
+            `${cur.pop == null ? '' : `，降雨機率 ${cur.pop}%`}` +
+            `${cur.t == null ? '' : `，氣溫 ${cur.t} 度`}（${tf.town.name}，逐 3 小時）。`);
+        }
+        const wet = ser.filter(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
+        if (!wet.length) {
+          L.push(`${IN}降雨時段：未來預報時段內無明顯降雨。`);
+        } else {
+          const first = wet[0], last = wet[wet.length - 1];
+          L.push(`${IN}降雨時段：${fmtWhen(first.from)} 起預報有雨` +
+            `${wet.length > 1 ? `，至 ${fmtWhen(last.to)} 止` : ''}` +
+            `（共 ${wet.length} 個預報時段）。`);
+        }
+        L.push(`${IN}預報時距：官方最細為 3 小時一格，本表未做內插；` +
+          `更近的降雨請看雷達回波。`);
+      }
     }
   }
 
@@ -4359,6 +4673,22 @@ function renderSettings() {
     </div>
   </div>
 
+  <div class="sec"><h2>天氣預報來源</h2></div>
+  <div class="card pad" style="margin-bottom:1.125rem">
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">逐 3 小時（未來 2 天）資料集代號</span>
+      <input type="text" id="c_wx3h" value="${esc(c.wx3h === undefined ? WX_3H_DEFAULT : (c.wx3h || ''))}"
+        placeholder="留空則不抓這一支" autocomplete="off" spellcheck="false"></label>
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">未來 1 週資料集代號</span>
+      <input type="text" id="c_wxWk" value="${esc(c.wxWk === undefined ? WX_WK_DEFAULT : (c.wxWk || ''))}"
+        placeholder="留空則不抓這一支" autocomplete="off" spellcheck="false"></label>
+    <span class="sub">兩支都走上面那把<b>中央氣象署授權碼</b>。
+      <b>最細就是 3 小時一格</b>，官方沒有逐小時的降雨預報，所以本程式不做內插——
+      把 3 小時的「天氣現象」硬切成 1 小時就是編造。
+      要看更近的降雨，請用實況頁的雷達回波。
+      抓不到時卡片會直接寫是哪一支代號失敗，改這裡即可。</span>
+    <div class="btnrow"><button class="btn sm" onclick="loadTyphoon(true)">立即取得</button></div>
+  </div>
+
   <div class="sec"><h2>設備與站臺</h2></div>
   <div class="card pad" style="margin-bottom:1.125rem">
     <div class="sw"><div class="sw-t"><b>設備類別</b><small>目前 ${DB.types.length} 類，可自行新增或改名</small></div>
@@ -4480,6 +4810,8 @@ function renderSettings() {
   bind('#c_key', e => { c.cwaKey = e.target.value.trim(); save(); });
   bind('#c_dgpa', e => { c.dgpaUrl = e.target.value.trim(); save(); fetchDgpa(true); });
   bind('#c_dgpaProxy', e => { c.dgpaProxy = e.target.value.trim(); save(); fetchDgpa(true); });
+  bind('#c_wx3h', e => { c.wx3h = e.target.value.trim(); save(); });
+  bind('#c_wxWk', e => { c.wxWk = e.target.value.trim(); save(); });
   bind('#c_bfShut', e => { c.bfShut = +e.target.value; save(); refreshAll(); });
   bind('#c_bfEmerg', e => { c.bfEmerg = +e.target.value; save(); refreshAll(); });
   bind('#c_bfResume', e => { c.bfResume = +e.target.value; save(); refreshAll(); });
