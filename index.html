@@ -319,7 +319,24 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
 /* 颱風頁的子頁籤。整頁攤開來要滑很久,分頁之後一次只看一件事。 */
 .typane{display:none}
 .typane.on{display:block}
-.seg.tysub{margin-bottom:0.75rem}
+/* 颱風頁的分頁列有八個,一排塞不進手機寬度(每格只剩 44px,
+   「停班課」三個字就爆了)。讓它換行成 4+4 —— 橫向捲動會把後面
+   幾個藏起來,值班的人不會知道那裡還有東西。 */
+.seg.tysub{margin-bottom:0.75rem;flex-wrap:wrap}
+.seg.tysub button{flex:1 0 calc(25% - 1px)}
+
+/* 概況頁的三行摘要。每一行是一顆按鈕,按下去跳到那一頁 ——
+   分頁多了之後,「警報怎麼樣了」不該還要自己去猜按哪一格。 */
+.glance{display:flex;align-items:center;gap:0.625rem;width:100%;text-align:left;
+  background:var(--surf);border:1px solid var(--edge);border-radius:var(--r2);
+  padding:0.6875rem 0.75rem;margin-bottom:0.375rem}
+.glance:active{background:var(--bg2)}
+.glance .gl-k{flex:0 0 2.75rem;font-family:var(--mono);font-size:0.6875rem;
+  color:var(--fg4);letter-spacing:0.04em}
+.glance .gl-b{flex:1;min-width:0}
+.glance .gl-v{display:block;font-size:0.9375rem;font-weight:700;color:var(--fg)}
+.glance .gl-s{display:block;font-size:0.75rem;color:var(--fg3);margin-top:0.125rem}
+.glance .gl-a{flex:0 0 auto;color:var(--fg4);font-size:1rem}
 .ty-pick{margin-bottom:0.625rem}
 .ty-pick .tp-h{font-size:0.75rem;color:var(--fg3);line-height:1.5;margin-bottom:0.4375rem}
 .ty-pick .tp-r{display:flex;flex-wrap:wrap;gap:0.4375rem}
@@ -405,6 +422,13 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
 .ty-lb.ex{color:#FFE9C2;background:rgba(90,58,10,.85);border-color:#EFAA35;font-weight:600}
 .ty-lb.now{color:#FFFFFF;background:rgba(160,30,25,.92);border-color:#FFFFFF}
 .impact{width:100%;min-width:24rem;border-collapse:collapse;font-size:0.8125rem}
+/* 天氣預報表比衝擊表窄:只有五個短欄位,不需要 24rem 的下限。
+   套用下限的話,390px 的手機上最右邊那欄（風）會被切掉一半,
+   而值班的人不會想到那張表可以左右拉。 */
+.impact.wx{min-width:0;table-layout:fixed}
+.impact.wx td,.impact.wx th{padding-left:0.25rem;padding-right:0.25rem}
+.impact.wx td:nth-child(2){white-space:normal;font-family:var(--sans)}
+.impact.wx col.c-t{width:5.5rem}
 /* 衝擊表多了「實測」欄,窄螢幕上寧可讓它橫向捲動,也不要把欄位擠到看不懂。 */
 .impact.wide{min-width:39rem}
 /* 時間軸滑桿。用原生 range,但配色跟著介面走,預設的亮藍色在暗底上很突兀。 */
@@ -538,16 +562,25 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
   <div class="seg tysub" id="tySeg">
     <button type="button" data-ty="now" aria-pressed="true">概況</button>
     <button type="button" data-ty="brief" aria-pressed="false">播報</button>
+    <button type="button" data-ty="warn" aria-pressed="false">警報</button>
+    <button type="button" data-ty="wx" aria-pressed="false">天氣</button>
     <button type="button" data-ty="dgpa" aria-pressed="false">停班課</button>
     <button type="button" data-ty="map" aria-pressed="false">路徑</button>
     <button type="button" data-ty="live" aria-pressed="false">實況</button>
     <button type="button" data-ty="st" aria-pressed="false">站臺</button>
   </div>
   <div class="typane on" id="ty-now">
-    <div id="tyWarn"></div>
     <div id="tyBody"></div>
   </div>
   <div class="typane" id="ty-brief"><div id="tyBrief"></div></div>
+  <!-- 警報：官方警報單（事實）在上，本機推估的發布時機在下。
+       兩者風險完全不同,不能混成一張卡。 -->
+  <div class="typane" id="ty-warn">
+    <div id="tyWarn"></div>
+    <div id="tyWarnEst"></div>
+  </div>
+  <!-- 天氣：現在有沒有下雨（實測）＋ 逐 3 小時到第 3 天（預報） -->
+  <div class="typane" id="ty-wx"><div id="tyWx"></div></div>
   <div class="typane" id="ty-dgpa"><div id="tyDgpa"></div></div>
   <div class="typane" id="ty-map">
     <div class="seg" id="mapFocus" style="margin-bottom:0.5rem;display:none">
@@ -1069,7 +1102,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v33';
+const APP_VER = 'v34';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2842,13 +2875,18 @@ function renderTyphoon(o) {
      擺兩次只是把同一件事講兩遍。停班停課整段搬到自己的頁籤。 */
   $('#tyBrief').innerHTML = briefCard();
   $('#tyDgpa').innerHTML = dgpaCard();
+  /* 警報與天氣各自獨立成頁 —— 兩者都是「一整頁的內容」,
+     疊在概況底下要捲很久才看得到,而值班時這兩件事是分開問的:
+     「氣象署發警報了沒」跟「外面現在有沒有在下雨」。 */
+  $('#tyWx').innerHTML = wxCard();
+  $('#tyWarnEst').innerHTML = warningCard();
   body.innerHTML = `<div class="card ty-hero">
     <div class="glow" style="background:${bfColor(bfV)}"></div>
     <div class="ty-top">${bfBadge(bfV, 'lg')}
       <div class="ty-nm"><b>${esc(ty.name)}</b>
         <span>${ty.en && ty.en !== ty.name ? esc(ty.en) + '　' : ''}<i style="font-style:normal;font-weight:700;color:${bfColor(bfV)}">${TC_FULL[tcClass(ty.vmax)] || ''}</i>　近中心最大風 ${bfLabel(bfV)}</span></div></div>
     <div class="ty-gr">${g.map(([l, v]) => `<div><b>${esc(v)}</b><small>${l}</small></div>`).join('')}</div>
-  </div>` + wxCard() + warningCard();
+  </div>` + glanceCard();
 
   drawMap(ty);
   renderImpact();
@@ -2870,6 +2908,12 @@ function renderTyphoon(o) {
       所以做法是:預設只給官方頁面的連結,另外開一個設定欄位,
       使用者拿到可用的 JSON 端點時自己填進來,程式才會去抓。         */
 let DGPA_LIVE = null, DGPA_LIVE_AT = 0, DGPA_LIVE_ERR = '', DGPA_HEAD = '', DGPA_UPD = '';
+/* 沒有颱風的日子,官方那張表裡一列縣市都沒有,只有一格
+   「無停班停課訊息。」。那是**有效的答案**,不是解析失敗 ——
+   原本一律當成「找不到縣市資料（來源格式可能變了）」報錯,
+   等於在風平浪靜的日子天天對值班的人謊報來源壞掉。 */
+let DGPA_NONE = false;
+const DGPA_NONE_RE = /無停班停課訊息|無停止上班上課|尚無停班停課|無停班、?停課/;
 
 /* 解析官方那張表。結構（實際回應）:
      <TABLE id="Table"> … <TD headers='city_Name'><FONT>基隆市</FONT></TD>
@@ -2890,7 +2934,12 @@ function parseDgpaHtml(html) {
   /* 官方寫的是「2026/08/25 06:47:16」。年份與秒在這裡沒有用 ——
      公告本來就是今天的,秒數也不會改變任何決定。留「08/25 06:47」。 */
   DGPA_UPD = m ? m[1].trim().replace(/^\d{4}[\/-]/, '').replace(/:\d{2}$/, '') : '';
+  DGPA_NONE = false;
   if (!t) return [];
+  /* 表格在、但整張表寫著「無停班停課訊息。」—— 這是官方的答案本身,
+     不是抓不到。記下來,下面 rows 為空時才分得出是「今天沒事」
+     還是「頁面格式真的變了」。 */
+  if (DGPA_NONE_RE.test(t.textContent.replace(/\s+/g, ''))) DGPA_NONE = true;
   const out = [];
   for (const tr of t.querySelectorAll('tr')) {
     const tds = tr.querySelectorAll('td');
@@ -2951,13 +3000,15 @@ async function fetchDgpa(manual) {
     const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const body = await r.text();
-    const rows = /^\s*[[{]/.test(body)
-      ? parseDgpaJson(JSON.parse(body))
-      : parseDgpaHtml(body);
-    if (!rows.length) throw new Error('回應中找不到縣市資料（來源格式可能變了）');
+    const isJson = /^\s*[[{]/.test(body);
+    const rows = isJson ? parseDgpaJson(JSON.parse(body)) : parseDgpaHtml(body);
+    // 自訂 JSON 端點回一個空陣列,意思就是「今天沒有任何縣市停班停課」
+    if (isJson) DGPA_NONE = !rows.length;
+    // 一列縣市都沒有,但官方明講「無停班停課訊息」—— 那是答案,不是失敗
+    if (!rows.length && !DGPA_NONE) throw new Error('回應中找不到縣市資料（來源格式可能變了）');
     DGPA_LIVE = rows; DGPA_LIVE_AT = Date.now(); DGPA_LIVE_ERR = '';
   } catch (e) {
-    DGPA_LIVE = null; DGPA_LIVE_ERR = String((e && e.message) || e);
+    DGPA_LIVE = null; DGPA_NONE = false; DGPA_LIVE_ERR = String((e && e.message) || e);
   }
   if (manual) renderTyphoon({});
 }
@@ -2983,6 +3034,81 @@ function nowRain(st) {
   const m10 = o.now, h1 = o.h1;
   const raining = (m10 != null && m10 > 0) || (h1 != null && h1 > 0);
   return { raining, m10, h1, h24: o.h24, name: o.name, km: Math.round(rb.km) };
+}
+
+/* ── 概況頁的摘要 ─────────────────────────────────────────
+   警報、天氣、停班停課各自搬進自己的分頁之後,概況頁只剩一張颱風卡。
+   這三行是「現在這三件事各自怎麼樣」的一句話版本,按下去就跳過去。
+   數字與判斷都直接取自那三頁自己的資料,不另外算一套 ——
+   兩套算法遲早會不一致,而不一致的那一刻沒有人會發現。        */
+function glanceCard() {
+  const row = (key, tab, val, sub, col) =>
+    `<button type="button" class="glance" onclick="goTySub('${tab}')">
+       <span class="gl-k">${key}</span>
+       <span class="gl-b"><span class="gl-v"${col ? ` style="color:${col}"` : ''}>${val}</span>
+         ${sub ? `<span class="gl-s">${sub}</span>` : ''}</span>
+       <span class="gl-a">›</span></button>`;
+
+  const out = [];
+
+  // 警報：官方發布的是事實,本機推估只是排程參考,兩者不能講成同一句話
+  const w = DB.ty.warning;
+  if (w && w.active) {
+    const n = (w.areas || []).length;
+    out.push(row('警報', 'warn', esc(w.headline || '颱風警報'),
+      `中央氣象署發布${n ? `　影響 ${n} 個縣市` : ''}`, 'var(--no)'));
+  } else if (WARN && WARN.isTy) {
+    const p = WARN.land || WARN.sea;
+    if (!WARN.sea && !WARN.land) {
+      out.push(row('警報', 'warn', '推估不會發布', '暴風範圍預估不會觸及臺灣近海', 'var(--ok)'));
+    } else if (p && p.phase === 'pending') {
+      const which = WARN.sea ? '海上' : '陸上';
+      out.push(row('警報', 'warn', `推估 ${fmtWhen(WARN.sea ? WARN.sea.issue : WARN.land.issue)} 發布${which}警報`,
+        '本機推估，非官方發布時間', 'var(--sb)'));
+    } else {
+      out.push(row('警報', 'warn', '尚未發布警報', '本機已推算發布時機，點開看', 'var(--sb)'));
+    }
+  } else {
+    out.push(row('警報', 'warn', '目前無颱風警報',
+      WARN ? '點開看推估的發布時機' : '尚未取得官方預報路徑', 'var(--fg2)'));
+  }
+
+  // 天氣：實測在前（現在下不下雨是事實）,預報在後
+  const st = DB.stations.find(x => IS_LIVE(x) && Number.isFinite(x.lat))
+    || DB.stations.find(x => IS_LIVE(x));
+  const rn = st ? nowRain(st) : null;
+  const tf = st ? townFor(st) : null;
+  let wxSub = '';
+  if (tf) {
+    const ser = townSeries(tf.town).filter(x => x.to > Date.now());
+    const wet = ser.find(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
+    wxSub = wet
+      ? `預報 ${relDay(wet.from)}${fmtClock(wet.from)} 起有雨`
+      : '未來預報時段內無明顯降雨';
+  } else {
+    wxSub = WX_ERR ? '預報取得失敗，點開看原因' : '尚未取得鄉鎮天氣預報';
+  }
+  out.push(row('天氣', 'wx',
+    rn ? (rn.raining ? '正在下雨' : '目前沒有下雨') : '無雨量站可判斷',
+    wxSub, rn && rn.raining ? 'var(--acc)' : 'var(--fg2)'));
+
+  // 停班停課：官方公告優先,沒有公告才講推估
+  const offHit = (DGPA_LIVE || []).filter(r => r.alert);
+  if (offHit.length) {
+    out.push(row('停班課', 'dgpa', `官方 ${offHit.length} 個縣市停止上班上課`,
+      offHit.slice(0, 4).map(r => esc(r.county)).join('、')
+      + (offHit.length > 4 ? ' 等' : ''), 'var(--no)'));
+  } else if (DGPA_NONE) {
+    out.push(row('停班課', 'dgpa', '官方：無停班停課訊息', '人事行政總處公告', 'var(--ok)'));
+  } else {
+    const estHit = COUNTIES_NS.filter(n => { const e = countyEstimate(n); return e && e.any; });
+    out.push(row('停班課', 'dgpa',
+      estHit.length ? `推估 ${estHit.length} 個縣市達基準` : '推估均未達基準',
+      DGPA_LIVE_ERR ? '官方公告取得失敗，點開看原因' : '推估不是公告，一律以官方為準',
+      estHit.length ? 'var(--sb)' : 'var(--fg2)'));
+  }
+
+  return out.join('');
 }
 
 function wxCard() {
@@ -3030,7 +3156,9 @@ function wxCard() {
         x.ws == null ? '—' : bfLabel(ms2bf(x.ws))}</td></tr>`;
   };
 
-  const table = rows => `<div style="overflow-x:auto"><table class="impact">
+  const table = rows => `<div style="overflow-x:auto"><table class="impact wx">
+    <colgroup><col class="c-t"><col><col style="width:2.9rem"><col style="width:2.6rem">
+      <col style="width:2.9rem"></colgroup>
     <tr><th>時段</th><th>天氣</th><th>降雨</th><th>溫度</th><th>風</th></tr>
     ${rows.map(cell).join('')}</table></div>`;
 
@@ -3099,8 +3227,17 @@ function countyEstimate(name) {
 
 /* 一列的官方狀態。回傳 null 代表還沒取得公告。 */
 function countyOfficial(name) {
-  if (!DGPA_LIVE || !DGPA_LIVE.length) return null;
-  return DGPA_LIVE.find(r => cnorm(r.county) === cnorm(name)) || null;
+  if (!DGPA_LIVE) return null;
+  const hit = DGPA_LIVE.find(r => cnorm(r.county) === cnorm(name));
+  if (hit) return hit;
+  /* 官方公告「無停班停課訊息」的日子,表上一列縣市都沒有。
+     那時每一縣市的官方狀態是「照常」,不是「尚未取得」——
+     後者會讓值班的人以為公告還沒出來,其實已經出來了,寫的是沒事。 */
+  if (DGPA_NONE) {
+    return { county: name, lines: [{ txt: '無停班停課訊息。', stop: false, scope: 'all' }],
+      full: false, part: false, alert: false, none: true };
+  }
+  return null;
 }
 
 function dgpaCard() {
@@ -3120,7 +3257,7 @@ function dgpaCard() {
     ${DGPA_UPD ? `官方 ${esc(DGPA_UPD)}` : ''}
     ${DGPA_LIVE_AT ? `· 本機 ${fmtShort(DGPA_LIVE_AT)}` : ''}</div>`;
 
-  const err = (!anyOff && DGPA_LIVE_ERR)
+  const err = (!anyOff && !DGPA_NONE && DGPA_LIVE_ERR)
     ? `<div class="msg e">公告取得失敗：${esc(DGPA_LIVE_ERR)}。官方那一頁沒有 CORS 標頭，
        要透過代理才拿得到；到設定確認「停班停課來源」，或按下方連結直接看官方公告。</div>` : '';
 
@@ -3169,8 +3306,13 @@ function dgpaCard() {
       ? `官方已公告 <b>${hitOff.length}</b> 個縣市停止上班上課${
           hitEst.length ? `；另有 <b>${hitEst.length}</b> 個縣市<b>推估</b>達基準但尚未公告` : ''}。`
       : hitEst.length
-        ? `官方尚未公告任何縣市停止上班上課；<b>${hitEst.length}</b> 個縣市<b>推估</b>達基準。`
-        : '官方尚未公告任何縣市停止上班上課，各縣市推估也都未達基準。'}
+        ? `${DGPA_NONE ? '官方公告<b>無停班停課訊息</b>' : '官方尚未公告任何縣市停止上班上課'}；`
+          + `<b>${hitEst.length}</b> 個縣市<b>推估</b>達基準。`
+        : DGPA_NONE
+          /* 「無停班停課訊息」是官方今天已經給出的答案,不是還沒公告。
+             兩者對值班的人意義完全不同:前者可以放心,後者要繼續盯。 */
+          ? '官方公告<b>無停班停課訊息</b>，各縣市推估也都未達基準。'
+          : '官方尚未公告任何縣市停止上班上課，各縣市推估也都未達基準。'}
     <b>推估不是公告</b>，一律以官方為準。</div>`;
 
   const foot = `<details class="msg w" style="margin:0.625rem 0 0">
@@ -3398,6 +3540,15 @@ function briefText() {
     const offHit = (DGPA_LIVE || []).filter(r => r.alert);
     const estHit = COUNTIES_NS.map(n => countyEstimate(n))
       .filter(e => e && e.any && !offHit.some(o => cnorm(o.county) === cnorm(e.name)));
+    /* 官方公告「無停班停課訊息」的日子也要寫一句 —— 那是今天已經有的
+       答案。整段不出現的話,讀播報稿的人分不出「官方說沒事」跟
+       「還沒去查」。 */
+    if (!offHit.length && !estHit.length && DGPA_NONE) {
+      L.push('');
+      L.push('停班停課');
+      L.push(`${IN}官方公告：無停班停課訊息（人事行政總處${DGPA_UPD ? ' ' + DGPA_UPD : ''}）。`);
+      L.push(`${IN}本機推估：各縣市均未達基準。`);
+    }
     if (offHit.length || estHit.length) {
       L.push('');
       L.push('停班停課（官方公告優先，其餘為本機推估）');
@@ -3536,7 +3687,7 @@ function fallbackCopy(txt, done) {
 }
 
 function clearTyPanes() {
-  ['tyPick', 'tyTl', 'tyImpact', 'tyFc', 'tyBrief'].forEach(id => {
+  ['tyPick', 'tyTl', 'tyImpact', 'tyFc', 'tyBrief', 'tyWx', 'tyWarnEst'].forEach(id => {
     const el = document.getElementById(id); if (el) el.innerHTML = '';
   });
 }
@@ -5329,7 +5480,7 @@ let tySub = 'now';
 try { tySub = localStorage.getItem(TYSUB_KEY) || 'now'; } catch (e) {}
 
 function goTySub(k) {
-  const panes = ['now', 'brief', 'dgpa', 'map', 'live', 'st'];
+  const panes = ['now', 'brief', 'warn', 'wx', 'dgpa', 'map', 'live', 'st'];
   if (!panes.includes(k)) k = 'now';
   tySub = k;
   try { localStorage.setItem(TYSUB_KEY, k); } catch (e) {}
