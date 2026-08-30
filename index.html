@@ -460,7 +460,9 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
 .tl-st{flex:1 1 7rem;min-width:6.5rem;display:flex;align-items:center;gap:0.4375rem;
   border:1px solid var(--edge);border-radius:var(--r2);padding:0.375rem 0.5rem;background:var(--surf2)}
 .tl-st span:last-child{font-size:0.8125rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.impact th{font-size:0.6562rem;letter-spacing:.11em;color:var(--fg3);text-align:left;
+/* 表頭置中。原本靠左,但底下的數字欄是靠右的,兩者對不齊,
+   看起來像欄位錯位。 */
+.impact th{font-size:0.6562rem;letter-spacing:.11em;color:var(--fg3);text-align:center;
   padding:0.5625rem 0.5rem;border-bottom:1px solid var(--edge2);font-weight:700}
 .impact td{padding:0.5625rem 0.5rem;border-bottom:1px solid var(--edge);font-family:var(--mono);color:var(--fg2)}
 .impact tr:last-child td{border-bottom:none}
@@ -769,7 +771,7 @@ function blankDB() {
       // 天氣要看哪裡：'' = 全部站臺、'__geo__' = 現在位置、其餘 = 站臺 id
       wxLoc: '',
       // 閃電：資料集代號與「幾公里內算數」。留空 = 不抓。
-      ltnSet: LTN_DEFAULT, ltnKm: 15,
+      ltnSet: LTN_DEFAULT, ltnKm: 15, ltnUrl: '',
     },
     /* ctl：本次管制期間。start=0 代表還沒開始管制。
        沒有這個概念的話,站臺的 at（「從什麼時候開始是這個狀態」）會被當成
@@ -1145,7 +1147,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v37';
+const APP_VER = 'v38';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1738,37 +1740,78 @@ function parseLightningJson(j) {
   return out;
 }
 
+/* 這支資料集官方是以 **KML／KMZ** 發布的,不是一般的 JSON 資料集。
+   上一版只打 datastore 的 JSON 端點,使用者實機得到「Load failed」——
+   那多半就是因為這支根本不在 datastore 上,或它的回應沒有 CORS 標頭。
+
+   所以改成**依序試幾個端點**,而且把每一個試過什麼、失敗在哪裡都留下來:
+   ① 使用者自填的網址（設定裡可貼,{KEY}／{DS} 會被代換）
+   ② fileapi 的 KML —— 官方就是以 KML 發布,先試這個
+   ③ datastore 的 JSON —— 萬一平台也有一份
+   每一個都先直連,直連被擋就走**通用網址代理**（就是停班停課那一支,
+   它只是把公開網址原樣轉發,已經在用了）。最後才試 POST 式的 CWA 代理。
+
+   全部失敗時,錯誤訊息會列出**試過哪些**,而不是只說一句 Load failed ——
+   使用者才有辦法把正確的網址貼進設定,不必等我猜對。            */
+let LTN_SRC = '';
+
+function ltnUrls(ds, key) {
+  const k = encodeURIComponent(key);
+  const out = [];
+  const custom = (DB.cfg.ltnUrl || '').trim();
+  if (custom) out.push({ tag: '自訂', url: custom.replace(/\{KEY\}/g, k).replace(/\{DS\}/g, ds) });
+  out.push({ tag: 'fileapi KML',
+    url: `https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/${ds}?Authorization=${k}&downloadType=WEB&format=KML` });
+  out.push({ tag: 'datastore JSON', url: `${CWA_BASE}/${ds}?Authorization=${k}&format=JSON` });
+  return out;
+}
+
 async function fetchLightning(key) {
   const ds = (DB.cfg.ltnSet === undefined ? LTN_DEFAULT : DB.cfg.ltnSet) || '';
-  if (!ds) { LTN = []; LTN_ERR = ''; return; }
-  const proxy = (DB.cfg.cwaProxy || '').trim();
-  let text = '';
-  try {
-    const r = await fetch(
-      `${CWA_BASE}/${ds}?Authorization=${encodeURIComponent(key)}&format=JSON`,
-      { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    text = await r.text();
-  } catch (e) {
-    if (!proxy) {
-      LTN = []; LTN_ERR = `${ds}：${(e && e.message) || e}（若是 CORS 被擋，請到設定填入 CWA 代理網址）`;
-      return;
-    }
+  if (!ds) { LTN = []; LTN_ERR = ''; LTN_SRC = ''; return; }
+
+  const gproxy = DB.cfg.dgpaProxy === undefined ? DGPA_PROXY_DEFAULT : String(DB.cfg.dgpaProxy || '');
+  const cproxy = (DB.cfg.cwaProxy || '').trim();
+  const tried = [];
+
+  const grab = async (label, run) => {
     try {
-      const r = await fetch(proxy, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ cwaDataset: ds, cwaKey: key, cwaParams: {} }),
-      });
-      if (!r.ok) throw new Error('代理回應 ' + r.status);
-      text = await r.text();
-    } catch (e2) {
-      LTN = []; LTN_ERR = `${ds}：${(e2 && e2.message) || e2}`;
-      return;
+      const r = await run();
+      if (!r.ok) { tried.push(`${label} HTTP ${r.status}`); return null; }
+      const t = await r.text();
+      if (!String(t || '').trim()) { tried.push(`${label} 回應是空的`); return null; }
+      LTN_SRC = label;
+      return t;
+    } catch (e) {
+      tried.push(`${label} ${(e && e.message) || e}`);
+      return null;
+    }
+  };
+
+  let text = null;
+  for (const c of ltnUrls(ds, key)) {
+    text = await grab(c.tag, () => fetch(c.url, { cache: 'no-store' }));
+    if (text) break;
+    if (gproxy) {
+      text = await grab(`${c.tag}（代理）`,
+        () => fetch(gproxy + encodeURIComponent(c.url), { cache: 'no-store' }));
+      if (text) break;
     }
   }
+  if (!text && cproxy) {
+    text = await grab('CWA 代理', () => fetch(cproxy, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwaDataset: ds, cwaKey: key, cwaParams: {} }),
+    }));
+  }
 
-  const body = String(text || '').replace(/^﻿/, '').trim();
-  if (!body) { LTN = []; LTN_ERR = `${ds}：回應是空的`; return; }
+  if (!text) {
+    LTN = []; LTN_SRC = '';
+    LTN_ERR = `${ds}：${tried.length} 種方式都失敗 —— ${tried.join('；')}`;
+    return;
+  }
+
+  const body = String(text).replace(/^﻿/, '').trim();
 
   let list = null;
   if (/^[[{]/.test(body)) {
@@ -1779,11 +1822,17 @@ async function fetchLightning(key) {
   /* KMZ 是 ZIP,瀏覽器沒有函式庫解不開。與其默默給空白,不如講清楚
      拿到的是哪一種東西 —— 使用者才知道要去設定裡改成 KML 還是 JSON。 */
   if (!list && /^PK/.test(body)) {
-    LTN = []; LTN_ERR = `${ds}：回應是 KMZ（壓縮檔），這支程式只讀得懂 KML 或 JSON`;
+    LTN = []; LTN_ERR = `${ds}：${LTN_SRC} 回應是 KMZ（壓縮檔），這支程式只讀得懂 KML 或 JSON。`
+      + '請在設定「閃電（落雷）」把網址改成 format=KML 的那一個。';
     return;
   }
-  if (!list) { LTN = []; LTN_ERR = `${ds}：回應格式無法辨識（開頭是「${esc(body.slice(0, 24))}」）`; return; }
-
+  if (!list) {
+    LTN = [];
+    LTN_ERR = `${ds}：${LTN_SRC} 回應格式無法辨識（開頭是「${body.slice(0, 24)}」）`;
+    return;
+  }
+  /* 解析成功但一筆都沒有 —— 那是**正常的**:沒有雷的時候本來就是空的。
+     不能當成失敗,否則風平浪靜的日子天天報錯。 */
   LTN = list; LTN_AT = Date.now(); LTN_ERR = '';
 }
 
@@ -3253,15 +3302,6 @@ function wxSite() {
   return { id: pick, name: '（已選的站臺不存在）', lat: NaN, lng: NaN, gone: true };
 }
 
-/* 播報稿與概況摘要一定要有一個地點才寫得出一句話。全部站臺模式時
-   用清單第一站（由北至南的最北那一站）,但**回傳時標明 fallback**,
-   呼叫端才有辦法在文字裡講清楚那是代表點,不是使用者指定的。 */
-function wxPrimary() {
-  const one = wxSite();
-  if (one && !one.gone) return one;
-  const first = wxSites()[0];
-  return first ? Object.assign({}, first, { fallback: true }) : null;
-}
 
 function locateMe() {
   if (!navigator.geolocation) { GEO_ERR = '這個瀏覽器沒有定位功能'; renderTyphoon({}); return; }
@@ -3481,28 +3521,35 @@ function todayFocus() {
     }
   }
 
-  // ── 天氣（實測在前）──
-  const st0 = wxPrimary();
-  const st = (st0 && Number.isFinite(st0.lat)) ? st0 : null;
+  /* ── 天氣 ──
+     一律講「幾站」,不挑代表點。挑一站代表其餘十八站,寫出來的東西
+     對那十八站可能完全不成立。 */
   const raining = sites.filter(x => { const r = nowRain(x); return r && r.raining; });
   if (raining.length) {
     add(45, '天氣', 'wx', `${raining.length} 站正在下雨`,
       raining.slice(0, 4).map(x => esc(x.name)).join('、')
       + (raining.length > 4 ? ' 等' : '') + '　雨量站實測', 'var(--acc)');
+  } else if (!sites.length) {
+    add(2, '天氣', 'wx', '尚未有可判斷的站臺', '站臺要有經緯度才對得到雨量站與預報', 'var(--fg2)');
   } else {
-    const rn = st ? nowRain(st) : null;
-    const tf = st ? townFor(st) : null;
-    let sub;
-    if (tf) {
-      const ser = townSeries(tf.town).filter(x => x.to > Date.now());
-      const wet = ser.find(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
-      sub = wet ? `預報 ${relDay(wet.from)}${fmtClock(wet.from)} 起有雨` : '未來預報時段內無明顯降雨';
-    } else sub = WX_ERR ? '預報取得失敗，點開看原因' : '尚未取得鄉鎮天氣預報';
-    add(tf && /起有雨/.test(sub) ? 20 : 2, '天氣', 'wx',
-      st ? (rn ? '目前沒有下雨' : '無雨量站可判斷')
-         : (st0 && st0.pending ? '尚未取得目前位置' : '尚未選定地點'),
-      st ? `${esc(st.name)}${st.fallback ? '（代表點）' : ''}　${sub}` : '點開選一個地點',
-      'var(--fg2)');
+    // 最早會下雨的那一站,講它 —— 那是「接下來第一件事」,不是代表
+    const ahead = sites.map(x => {
+      const tf = townFor(x);
+      const ser = tf ? townSeries(tf.town).filter(y => y.to > Date.now()) : [];
+      const wet = ser.find(y => isRainy(y.wx) || (y.pop != null && y.pop >= 70));
+      return wet ? { x, wet } : null;
+    }).filter(Boolean).sort((a, b) => a.wet.from - b.wet.from);
+    if (ahead.length) {
+      add(20, '天氣', 'wx', `${ahead.length} 站預報有雨`,
+        `最早 ${esc(ahead[0].x.name)} ${relDay(ahead[0].wet.from)}${fmtClock(ahead[0].wet.from)} 起`,
+        'var(--fg2)');
+    } else {
+      const anyTf = sites.some(x => townFor(x));
+      add(2, '天氣', 'wx',
+        anyTf ? `${sites.length} 站目前都沒有下雨` : '尚未取得鄉鎮天氣預報',
+        anyTf ? '未來預報時段內也無明顯降雨'
+              : (WX_ERR ? '預報取得失敗，點開看原因' : '按上方「更新」取得'), 'var(--fg2)');
+    }
   }
 
   return F.sort((a, b) => b.rank - a.rank);
@@ -3670,15 +3717,26 @@ function thunderCard() {
 
   // ③ 預報
   if (ahead.length) {
+    /* 十九站各寫一行,而且十九行寫的是同兩個時段 —— 那是雜訊不是資訊。
+       **照時段分組**:同一個時段的站臺併成一行,值班一眼看到的是
+       「幾點開始、有幾站」,而不是一整面站名。 */
+    const byT = new Map();
+    for (const r of ahead) {
+      const k = `${relDay(r.t.from)}${fmtClock(r.t.from)}–${fmtClock(r.t.to)}`;
+      if (!byT.has(k)) byT.set(k, { from: r.t.from, wx: r.t.wx, names: [] });
+      byT.get(k).names.push(r.x.name);
+    }
+    const groups = [...byT.entries()].sort((a, b) => a[1].from - b[1].from);
     rows.push(`<div style="padding:0.5rem 0">
-      <b style="color:var(--sb)">預報有雷的站臺（${ahead.length}）</b>
-      ${ahead.slice(0, 8).map(r => `<div style="font-size:0.8125rem;margin-top:0.25rem">
-        <b>${esc(r.x.name)}</b>
-        <span style="color:var(--fg3)">　${relDay(r.t.from)}${fmtClock(r.t.from)}–${fmtClock(r.t.to)}　${
-          esc(r.t.wx)}</span></div>`).join('')}
-      ${ahead.length > 8 ? `<div style="color:var(--fg4);font-size:0.75rem">…等 ${ahead.length} 站</div>` : ''}
+      <b style="color:var(--sb)">預報有雷：${ahead.length} 站，${groups.length} 個時段</b>
+      ${groups.map(([k, g]) => `<details style="margin-top:0.3125rem">
+        <summary style="cursor:pointer;font-size:0.8125rem;padding:0.125rem 0">
+          <span class="mono" style="color:var(--sb)">${k}</span>
+          <span style="color:var(--fg2)">　${esc(g.wx)}　${g.names.length} 站</span></summary>
+        <div style="font-size:0.75rem;color:var(--fg3);padding:0.125rem 0 0 0.75rem">${
+          g.names.map(esc).join('、')}</div></details>`).join('')}
       <div class="hint" style="margin-top:0.375rem">
-        <b>這是預報不是現在正在打雷</b>，時距 3 小時一格。</div></div>`);
+        <b>這是預報不是現在正在打雷</b>，時距 3 小時一格。點時段看是哪幾站。</div></div>`);
   }
 
   return head + err + `<div class="card pad" style="margin-bottom:0.75rem">${win}${
@@ -4171,43 +4229,65 @@ function briefText() {
   }
 
   /* ── 天氣 ──
-     現在有沒有在下雨是**實測**（雨量站 10 分鐘累積）,預報是鄉鎮預報**逐 3 小時**。
-     兩件事分開講,不要混在一起 —— 值班回報時「現在」跟「等一下」的責任不一樣。 */
+     以前是挑一站當「代表點」寫一段。使用者的原話:**「我不想要代表」**——
+     十九個站散在好幾個縣市,挑一站代表其餘十八站,寫出來的東西對那十八站
+     可能完全不成立。而且「代表點」這三個字本身就是在告訴讀的人
+     「這個數字不一定是你要的那一站」—— 那就不該寫。
+
+     改成**逐站彙整**:現在哪幾站在下雨（實測）、哪幾站預報有雨、其餘沒有。
+     一句話講不完就分行,但**每一行講的都是真的那幾站**,不代表任何人。 */
   {
-    const wst0 = wxPrimary();
-    const wst = (wst0 && Number.isFinite(wst0.lat)) ? wst0 : null;
-    const rn = wst ? nowRain(wst) : null;
-    const tf = wst ? townFor(wst) : null;
-    if (rn || tf) {
+    const wsites = DB.stations.filter(x => IS_LIVE(x) && Number.isFinite(x.lat));
+    if (wsites.length) {
+      const rows = wsites.map(x => {
+        const rn = nowRain(x);
+        const tf = townFor(x);
+        const ser = tf ? townSeries(tf.town).filter(y => y.to > Date.now()) : [];
+        const wet = ser.find(y => isRainy(y.wx) || (y.pop != null && y.pop >= 70));
+        return { x, rn, tf, wet };
+      });
+      const raining = rows.filter(r => r.rn && r.rn.raining);
+      /* 「現在在下」與「接下來會下」是兩件獨立的事,不能互相排除 ——
+         正在下雨的站臺等一下可能就停了,現在沒下的也可能等一下才下。
+         原本把正在下雨的站臺從預報那一行排除,結果全部站臺都在下雨時,
+         預報那一行整個不見。 */
+      const wetAhead = rows.filter(r => r.wet);
+      const noRain = rows.filter(r => r.rn && !r.wet && !r.rn.raining);
+      const noGauge = rows.filter(r => !r.rn);
+
       L.push('');
-      L.push(`天氣（${wst.name}${wst.geo ? '，GPS 定位' : ''}${
-        wst.fallback ? '，代表點' : ''}）`);
-      if (rn) {
-        L.push(`${IN}目前天候：${rn.raining ? '正在降雨' : '未降雨'}` +
-          `（${rn.name}實測，10 分鐘 ${rn.m10 == null ? '—' : rn.m10} 毫米、` +
-          `時雨量 ${rn.h1 == null ? '—' : rn.h1} 毫米、` +
-          `24 小時累積 ${rn.h24 == null ? '—' : Math.round(rn.h24)} 毫米）。`);
+      L.push('天氣');
+      if (raining.length) {
+        L.push(`${IN}正在降雨（實測）：${raining.map(r =>
+          `${r.x.name} 時雨量 ${r.rn.h1 == null ? '—' : r.rn.h1} 毫米`
+          + `（24 小時累積 ${r.rn.h24 == null ? '—' : Math.round(r.rn.h24)} 毫米）`).join('；')}。`);
+      } else {
+        L.push(`${IN}正在降雨（實測）：無。各站臺周圍雨量站目前均未測到降雨。`);
       }
-      if (tf) {
-        const ser = townSeries(tf.town).filter(x => x.to > Date.now());
-        const cur = ser[0];
-        if (cur) {
-          L.push(`${IN}預報天氣：${cur.wx || '—'}` +
-            `${cur.pop == null ? '' : `，降雨機率 ${cur.pop}%`}` +
-            `${cur.t == null ? '' : `，氣溫 ${cur.t} 度`}（${tf.town.name}，逐 3 小時）。`);
+      if (wetAhead.length) {
+        // 同一個時段的站臺併在一起,十九站不要寫成十九行
+        const byT = new Map();
+        for (const r of wetAhead) {
+          const k = `${relDay(r.wet.from)}${fmtClock(r.wet.from)}`;
+          if (!byT.has(k)) byT.set(k, []);
+          byT.get(k).push(r.x.name);
         }
-        const wet = ser.filter(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
-        if (!wet.length) {
-          L.push(`${IN}降雨時段：未來預報時段內無明顯降雨。`);
-        } else {
-          const first = wet[0], last = wet[wet.length - 1];
-          L.push(`${IN}降雨時段：${fmtWhen(first.from)} 起預報有雨` +
-            `${wet.length > 1 ? `，至 ${fmtWhen(last.to)} 止` : ''}` +
-            `（共 ${wet.length} 個預報時段）。`);
-        }
-        L.push(`${IN}預報時距：官方最細為 3 小時一格，本表未做內插；` +
-          `更近的降雨請看雷達回波。`);
+        const parts = [...byT.entries()]
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([k, ns]) => `${k} 起 ${ns.length} 站（${ns.slice(0, 5).join('、')}${
+            ns.length > 5 ? `等 ${ns.length} 站` : ''}）`);
+        L.push(`${IN}預報有雨：${parts.join('；')}。`);
       }
+      if (noRain.length) {
+        L.push(`${IN}預報無明顯降雨：${noRain.length} 站`
+          + (noRain.length <= 6 ? `（${noRain.map(r => r.x.name).join('、')}）` : '') + '。');
+      }
+      if (noGauge.length) {
+        L.push(`${IN}無鄰近雨量站可判斷：${noGauge.length} 站`
+          + (noGauge.length <= 6 ? `（${noGauge.map(r => r.x.name).join('、')}）` : '') + '。');
+      }
+      L.push(`${IN}預報時距：官方最細為 3 小時一格，本表未做內插；`
+        + `更近的降雨請看雷達回波。`);
     }
   }
 
@@ -5578,13 +5658,22 @@ function renderSettings() {
     <label class="fld" style="margin-bottom:0.5rem"><span class="lb">計入半徑（公里）</span>
       <input type="number" id="c_ltnKm" min="1" max="100" step="1" value="${ltnRadius()}">
       <span class="sub">站臺周圍多少公里內的落雷要算進來。預設 15 公里。</span></label>
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">自訂網址（選填，會優先使用）</span>
+      <input type="text" id="c_ltnUrl" value="${esc(c.ltnUrl || '')}"
+        placeholder="https://…　可用 {DS} 代表代號、{KEY} 代表授權碼"
+        autocomplete="off" spellcheck="false"></label>
     <span class="sub"><code>O-A0039-001</code> 是<b>過去 1 小時閃電偵測資料</b>，
       一筆一個落雷點，有經緯度、時間，以及<b>雲對地／雲間</b>的分別。
       <b>只有雲對地會打到地面設備</b>，程式分開計算——官方樣本裡 124 筆中有 91 筆是雲間，
-      加在一起會把數字灌水一倍以上。<br>
-      這支資料集官方是以 KML／KMZ 發布的，程式<b>JSON 與 KML 兩種都接</b>；
-      若拿到的是 KMZ（壓縮檔）會直接講出來——瀏覽器沒有函式庫解不開壓縮檔。
-      抓不到時雷電卡會寫明原因。</span>
+      加在一起會把數字灌水一倍以上。<br><br>
+      <b>這支資料集官方是以 KML／KMZ 發布的，不是一般的 JSON 資料集。</b>
+      程式會<b>依序試</b>：自訂網址 →
+      <code>fileapi</code> 的 KML → <code>datastore</code> 的 JSON；每一個都先直連，
+      直連被擋就改走上面「停班停課來源」的<b>通用網址代理</b>。
+      全部失敗時會列出<b>試過哪些、各自失敗在哪裡</b>——
+      看到之後可以把正確的網址直接貼在上面這一格。<br>
+      JSON 與 KML 兩種格式都接；拿到 KMZ（壓縮檔）會直接講出來，
+      瀏覽器沒有函式庫解不開壓縮檔。</span>
     <div class="btnrow"><button class="btn sm" onclick="loadTyphoon(true)">立即取得</button></div>
   </div>
 
@@ -5797,6 +5886,7 @@ function renderSettings() {
   bind('#c_wxWk', e => { c.wxWk = e.target.value.trim(); save(); });
   bind('#c_ltnSet', e => { c.ltnSet = e.target.value.trim(); save(); });
   bind('#c_ltnKm', e => { c.ltnKm = clamp(+e.target.value || 15, 1, 100); save(); renderTyphoon({}); });
+  bind('#c_ltnUrl', e => { c.ltnUrl = e.target.value.trim(); save(); });
   bind('#c_bfShut', e => { c.bfShut = +e.target.value; save(); refreshAll(); });
   bind('#c_bfEmerg', e => { c.bfEmerg = +e.target.value; save(); refreshAll(); });
   bind('#c_bfResume', e => { c.bfResume = +e.target.value; save(); refreshAll(); });
