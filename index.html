@@ -831,7 +831,7 @@ function blankDB() {
       // 天氣要看哪裡：'' = 全部站臺、'__geo__' = 現在位置、其餘 = 站臺 id
       wxLoc: '',
       // 閃電：資料集代號與「幾公里內算數」。留空 = 不抓。
-      ltnSet: LTN_DEFAULT, ltnKm: 15, ltnUrl: '',
+      ltnSet: LTN_DEFAULT, ltnKm: 15, ltnUrl: '', ltnProxy: '',
     },
     /* ctl：本次管制期間。start=0 代表還沒開始管制。
        沒有這個概念的話,站臺的 at（「從什麼時候開始是這個狀態」）會被當成
@@ -1209,7 +1209,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v39';
+const APP_VER = 'v40';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1859,7 +1859,7 @@ function townFor(st) {
    這支資料集官方是以 KML／KMZ 發布的。datastore 的 JSON 端點會不會
    一樣有,我在這個環境**無法確認** —— 所以下面的解析**兩種都接**:
    拿到 JSON 就走 JSON,拿到 XML 就當 KML 解。抓不到就明講。      */
-let LTN = [], LTN_AT = 0, LTN_ERR = '', LTN_WIN = '';
+let LTN = [], LTN_AT = 0, LTN_ERR = '', LTN_WIN = '', LTN_MANUAL = false;
 
 const CG_RE = /對地/;          // 「雲對地」「對地」都算;「雲間」不算
 
@@ -1928,13 +1928,67 @@ function parseLightningJson(j) {
    使用者才有辦法把正確的網址貼進設定,不必等我猜對。            */
 let LTN_SRC = '';
 
+/* ── KMZ（ZIP）直接在瀏覽器裡解開 ──────────────────────────
+   上一版我寫「瀏覽器沒有函式庫解不開壓縮檔」。那句話**過時了** ——
+   現代瀏覽器有 DecompressionStream('deflate-raw'),而 KMZ 就是一個
+   標準 ZIP,裡面通常只有一個 doc.kml,壓縮方式是 deflate。
+   四十行就讀得到,不必拉一個 JSZip 進來。
+
+   做法照 ZIP 規格走中央目錄（不是本地檔頭）—— 本地檔頭在使用
+   data descriptor 時大小欄位會是 0,中央目錄才一定有正確的大小。 */
+async function unzipFirstKml(buf) {
+  const u8 = new Uint8Array(buf);
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  // 尾端的 End of Central Directory：PK\x05\x06
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= 0 && i > u8.length - 66000; i--) {
+    if (u8[i] === 0x50 && u8[i + 1] === 0x4B && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('不是有效的 ZIP（找不到中央目錄）');
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+
+  const dec = new TextDecoder('utf-8');
+  for (let n = 0; n < count; n++) {
+    if (dv.getUint32(off, true) !== 0x02014b50) throw new Error('中央目錄格式不符');
+    const method = dv.getUint16(off + 10, true);
+    const compSize = dv.getUint32(off + 20, true);
+    const nameLen = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const cmtLen = dv.getUint16(off + 32, true);
+    const local = dv.getUint32(off + 42, true);
+    const name = dec.decode(u8.subarray(off + 46, off + 46 + nameLen));
+    off += 46 + nameLen + extraLen + cmtLen;
+    if (!/\.kml$/i.test(name)) continue;
+
+    // 本地檔頭：資料從 local+30+nameLen+extraLen 開始（這兩個長度可能與中央目錄不同）
+    if (dv.getUint32(local, true) !== 0x04034b50) throw new Error('本地檔頭格式不符');
+    const lNameLen = dv.getUint16(local + 26, true);
+    const lExtraLen = dv.getUint16(local + 28, true);
+    const start = local + 30 + lNameLen + lExtraLen;
+    const data = u8.subarray(start, start + compSize);
+    if (method === 0) return dec.decode(data);        // 未壓縮
+    if (method !== 8) throw new Error(`ZIP 壓縮方式 ${method} 不支援`);
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('這個瀏覽器沒有 DecompressionStream，讀不了壓縮檔');
+    }
+    const ds = new DecompressionStream('deflate-raw');
+    const blob = new Blob([data]).stream().pipeThrough(ds);
+    return dec.decode(await new Response(blob).arrayBuffer());
+  }
+  throw new Error('ZIP 裡沒有 .kml');
+}
+
+
 function ltnUrls(ds, key) {
   const k = encodeURIComponent(key);
   const out = [];
   const custom = (DB.cfg.ltnUrl || '').trim();
   if (custom) out.push({ tag: '自訂', url: custom.replace(/\{KEY\}/g, k).replace(/\{DS\}/g, ds) });
-  out.push({ tag: 'fileapi KML',
-    url: `https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/${ds}?Authorization=${k}&downloadType=WEB&format=KML` });
+  const F = 'https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/' + ds;
+  out.push({ tag: 'fileapi KML', url: `${F}?Authorization=${k}&downloadType=WEB&format=KML` });
+  // KMZ 也試 —— 現在解得開壓縮檔了,而官方主要就是發 KMZ
+  out.push({ tag: 'fileapi KMZ', url: `${F}?Authorization=${k}&downloadType=WEB&format=KMZ` });
   out.push({ tag: 'datastore JSON', url: `${CWA_BASE}/${ds}?Authorization=${k}&format=JSON` });
   return out;
 }
@@ -1942,49 +1996,85 @@ function ltnUrls(ds, key) {
 async function fetchLightning(key) {
   const ds = (DB.cfg.ltnSet === undefined ? LTN_DEFAULT : DB.cfg.ltnSet) || '';
   if (!ds) { LTN = []; LTN_ERR = ''; LTN_SRC = ''; return; }
+  /* 手動匯入的檔案在 30 分鐘內視為有效,不要被一次失敗的自動抓取蓋掉 ——
+     使用者好不容易把檔案弄進來,按一下「更新」就沒了會很惱人。 */
+  if (LTN_MANUAL && Date.now() - LTN_AT < 30 * 60000) return;
 
+  /* 代理有兩個來源:落雷專用的（設定裡可填,{URL} 會被代換成編碼過的網址）,
+     以及停班停課那一支通用的。專用的優先 —— 那支通用 Worker 是為了
+     dgpa.gov.tw 做的,對別的網域回 500 是很合理的事。 */
+  const lproxy = (DB.cfg.ltnProxy || '').trim();
   const gproxy = DB.cfg.dgpaProxy === undefined ? DGPA_PROXY_DEFAULT : String(DB.cfg.dgpaProxy || '');
   const cproxy = (DB.cfg.cwaProxy || '').trim();
+  const viaProxy = (tpl, url) => tpl.includes('{URL}')
+    ? tpl.replace(/\{URL\}/g, encodeURIComponent(url))
+    : tpl + encodeURIComponent(url);
   const tried = [];
 
+  /* 讀成 bytes 而不是文字 —— KMZ 是二進位的,先用 text() 讀會把它毀掉。
+     失敗時把回應的開頭一小段也記下來:代理回 500 的時候,那一段
+     常常就寫著原因（whitelist、缺參數之類）。 */
   const grab = async (label, run) => {
     try {
       const r = await run();
-      if (!r.ok) { tried.push(`${label} HTTP ${r.status}`); return null; }
-      const t = await r.text();
-      if (!String(t || '').trim()) { tried.push(`${label} 回應是空的`); return null; }
+      const buf = await r.arrayBuffer();
+      if (!r.ok) {
+        const head = new TextDecoder().decode(new Uint8Array(buf).subarray(0, 120))
+          .replace(/\s+/g, ' ').trim();
+        tried.push(`${label} HTTP ${r.status}${head ? `「${head}」` : ''}`);
+        return null;
+      }
+      if (!buf.byteLength) { tried.push(`${label} 回應是空的`); return null; }
       LTN_SRC = label;
-      return t;
+      return buf;
     } catch (e) {
       tried.push(`${label} ${(e && e.message) || e}`);
       return null;
     }
   };
 
-  let text = null;
+  let buf = null;
   for (const c of ltnUrls(ds, key)) {
-    text = await grab(c.tag, () => fetch(c.url, { cache: 'no-store' }));
-    if (text) break;
-    if (gproxy) {
-      text = await grab(`${c.tag}（代理）`,
-        () => fetch(gproxy + encodeURIComponent(c.url), { cache: 'no-store' }));
-      if (text) break;
+    buf = await grab(c.tag, () => fetch(c.url, { cache: 'no-store' }));
+    if (buf) break;
+    if (lproxy) {
+      buf = await grab(`${c.tag}（落雷代理）`,
+        () => fetch(viaProxy(lproxy, c.url), { cache: 'no-store' }));
+      if (buf) break;
+    }
+    if (gproxy && gproxy !== lproxy) {
+      buf = await grab(`${c.tag}（通用代理）`,
+        () => fetch(viaProxy(gproxy, c.url), { cache: 'no-store' }));
+      if (buf) break;
     }
   }
-  if (!text && cproxy) {
-    text = await grab('CWA 代理', () => fetch(cproxy, {
+  if (!buf && cproxy) {
+    buf = await grab('CWA 代理', () => fetch(cproxy, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cwaDataset: ds, cwaKey: key, cwaParams: {} }),
     }));
   }
 
-  if (!text) {
+  if (!buf) {
     LTN = []; LTN_SRC = '';
     LTN_ERR = `${ds}：${tried.length} 種方式都失敗 —— ${tried.join('；')}`;
     return;
   }
 
-  const body = String(text).replace(/^﻿/, '').trim();
+  const u8 = new Uint8Array(buf);
+  let body;
+  // PK\x03\x04 = ZIP。KMZ 就是一個 ZIP,裡面通常只有 doc.kml。
+  if (u8[0] === 0x50 && u8[1] === 0x4B && u8[2] === 0x03 && u8[3] === 0x04) {
+    try { body = await unzipFirstKml(buf); }
+    catch (e) {
+      LTN = [];
+      LTN_ERR = `${ds}：${LTN_SRC} 回應是 KMZ，但解壓縮失敗（${(e && e.message) || e}）`;
+      return;
+    }
+  } else {
+    body = new TextDecoder('utf-8').decode(u8);
+  }
+  body = String(body).replace(/^﻿/, '').trim();
 
   let list = null;
   if (/^[[{]/.test(body)) {
@@ -1992,21 +2082,61 @@ async function fetchLightning(key) {
     catch (e) { list = null; }
   }
   if ((!list || !list.length) && /^</.test(body)) list = parseLightningKml(body);
-  /* KMZ 是 ZIP,瀏覽器沒有函式庫解不開。與其默默給空白,不如講清楚
-     拿到的是哪一種東西 —— 使用者才知道要去設定裡改成 KML 還是 JSON。 */
-  if (!list && /^PK/.test(body)) {
-    LTN = []; LTN_ERR = `${ds}：${LTN_SRC} 回應是 KMZ（壓縮檔），這支程式只讀得懂 KML 或 JSON。`
-      + '請在設定「閃電（落雷）」把網址改成 format=KML 的那一個。';
-    return;
-  }
+
   if (!list) {
     LTN = [];
-    LTN_ERR = `${ds}：${LTN_SRC} 回應格式無法辨識（開頭是「${body.slice(0, 24)}」）`;
+    /* 開頭是 PK 但沒有走到解壓縮那條路,代表 ZIP 檔頭不完整 ——
+       多半是只下載到一半,或代理把二進位內容當成文字轉過一手。
+       講「格式無法辨識」對排查沒有幫助,講「像壓縮檔但壞了」才有。 */
+    LTN_ERR = /^PK/.test(body)
+      ? `${ds}：${LTN_SRC} 回應看起來是壓縮檔（ZIP／KMZ）但檔頭不完整，`
+        + '可能只下載到一半，或代理把二進位內容當成文字轉過一手'
+      : `${ds}：${LTN_SRC} 回應格式無法辨識（開頭是「${body.slice(0, 24)}」）`;
     return;
   }
   /* 解析成功但一筆都沒有 —— 那是**正常的**:沒有雷的時候本來就是空的。
      不能當成失敗,否則風平浪靜的日子天天報錯。 */
-  LTN = list; LTN_AT = Date.now(); LTN_ERR = '';
+  LTN = list; LTN_AT = Date.now(); LTN_ERR = ''; LTN_MANUAL = false;
+}
+
+/* ── 手動匯入落雷檔 ───────────────────────────────────────
+   自動抓取被 CORS 與代理擋住時,值班的人手上其實有辦法:
+   到氣象署網站把 KMZ／KML 下載下來,直接餵給這支程式。
+   現在解得開 ZIP,所以 KMZ 原檔就能用,不必先自己解壓縮。
+
+   這是**逃生口不是正路** —— 它是靜態的一份檔案,不會自己更新,
+   所以畫面上一定標明「手動匯入」與資料涵蓋的時間。         */
+function importLightningFile(e) {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  const r = new FileReader();
+  r.onerror = () => { LTN_ERR = '讀不到這個檔案'; renderTyphoon({}); };
+  r.onload = async () => {
+    try {
+      const buf = r.result;
+      const u8 = new Uint8Array(buf);
+      let text;
+      if (u8[0] === 0x50 && u8[1] === 0x4B && u8[2] === 0x03 && u8[3] === 0x04) {
+        text = await unzipFirstKml(buf);
+      } else {
+        text = new TextDecoder('utf-8').decode(u8).replace(/^\uFEFF/, '');
+      }
+      let list = null;
+      if (/^\s*[[{]/.test(text)) { try { list = parseLightningJson(JSON.parse(text)); } catch (err) { list = null; } }
+      if ((!list || !list.length) && /^\s*</.test(text)) list = parseLightningKml(text);
+      if (!list) throw new Error(`認不出這個檔案的格式（開頭是「${text.slice(0, 24)}」）`);
+      LTN = list; LTN_AT = Date.now(); LTN_ERR = ''; LTN_MANUAL = true;
+      LTN_SRC = '手動匯入 ' + f.name;
+      toast(`已匯入 ${list.length} 筆落雷（${list.filter(x => x.cg).length} 筆對地）`);
+      renderTyphoon({});
+    } catch (err) {
+      LTN_ERR = `檔案匯入失敗：${(err && err.message) || err}`;
+      renderTyphoon({});
+      toast('落雷檔匯入失敗');
+    }
+  };
+  r.readAsArrayBuffer(f);
 }
 
 /* 這一站周圍有幾次落雷。**雲對地與雲間分開算** ——
@@ -3820,10 +3950,19 @@ function thunderCard() {
   const ahead = sites.map(x => ({ x, t: thunderAhead(x) })).filter(r => r.t);
 
   const head = `<div class="sec"><h2>雷電</h2></div>`;
+  /* 手動匯入的檔案不會自己更新。最後一筆落雷距現在超過 90 分鐘就明講
+     「資料可能已過期」—— 拿兩小時前的落雷判斷現在要不要關機是危險的。 */
+  const newest = LTN.reduce((m, x) => Math.max(m, x.t || 0), 0);
+  const stale = LTN_AT && newest && (Date.now() - newest > 90 * 60000);
   const win = LTN_AT
     ? `<div class="tybar" style="margin-bottom:0.5rem"><b>落雷實測</b>
         ${LTN_WIN ? esc(LTN_WIN) : '過去 1 小時'}
-        <span class="mono" style="color:var(--fg4)">　全臺 ${LTN.length} 筆　半徑 ${R} km</span></div>`
+        <span class="mono" style="color:var(--fg4)">　全臺 ${LTN.length} 筆　半徑 ${R} km</span>
+        ${LTN_MANUAL ? '<span class="tag" style="background:var(--sb);color:#08131A">手動匯入</span>' : ''}
+       </div>`
+      + (stale ? `<div class="msg w" style="margin-bottom:0.5rem">
+          <b>這份落雷資料可能已過期</b>：最後一筆是 ${fmtShort(newest)}（${relative(newest)}）。
+          ${LTN_MANUAL ? '手動匯入的檔案不會自己更新，請重新下載後再匯入。' : '請按上方「更新」。'}</div>` : '')
     : '';
   const err = LTN_ERR
     ? `<div class="msg e" style="margin-bottom:0.5rem">落雷資料取得失敗：${esc(LTN_ERR)}。
@@ -5881,6 +6020,47 @@ function renderSettings() {
       <input type="text" id="c_ltnUrl" value="${esc(c.ltnUrl || '')}"
         placeholder="https://…　可用 {DS} 代表代號、{KEY} 代表授權碼"
         autocomplete="off" spellcheck="false"></label>
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">落雷專用代理（選填）</span>
+      <input type="text" id="c_ltnProxy" value="${esc(c.ltnProxy || '')}"
+        placeholder="https://你的worker.workers.dev/?url={URL}"
+        autocomplete="off" spellcheck="false">
+      <span class="sub">{URL} 會被代換成編碼過的網址；沒有 {URL} 就直接接在後面。
+        留空則沿用「停班停課來源」那一支通用代理。</span></label>
+    <div class="btnrow" style="margin-bottom:0.5rem">
+      <button class="btn" id="c_ltnFileBtn">匯入落雷檔（KMZ／KML）</button>
+    </div>
+    <input type="file" id="c_ltnFile" class="offscreen">
+    <p class="hint" style="margin:0 0 0.5rem">
+      <b>抓不到的時候，這是最快的一條路：</b>到氣象署把
+      <code>O-A0039-001</code> 的檔案下載下來，用上面那顆鈕直接匯入。
+      <b>KMZ 原檔就可以</b>，不必自己解壓縮。<br>
+      這是<b>逃生口不是正路</b>——它是靜態的一份檔案，不會自己更新，
+      畫面上會標明「手動匯入」與資料涵蓋的時間。匯入後 30 分鐘內不會被自動抓取蓋掉。</p>
+    <details style="margin-bottom:0.5rem">
+      <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
+        為什麼抓不到？怎麼一勞永逸　·　點開</summary>
+      <div class="hint" style="margin-top:0.375rem">
+        氣象署的檔案端點<b>沒有送 CORS 標頭</b>，瀏覽器直連一定被擋（訊息會是
+        <code>Load failed</code>）。「停班停課來源」那一支通用 Worker 是為了
+        <code>dgpa.gov.tw</code> 做的，對別的網域回 <code>500</code> 很合理。<br><br>
+        一勞永逸的做法是自己開一個 Cloudflare Worker（免費方案就夠），
+        貼上這段，再把網址填到上面「落雷專用代理」：
+        <pre style="white-space:pre-wrap;font-family:var(--mono);font-size:0.6875rem;
+          background:var(--bg2);border:1px solid var(--edge);border-radius:var(--r2);
+          padding:0.5rem;margin:0.375rem 0;overflow-x:auto">export default {
+  async fetch(req) {
+    const u = new URL(req.url).searchParams.get('url');
+    if (!u || !/^https:\/\/opendata\.cwa\.gov\.tw\//.test(u))
+      return new Response('bad url', { status: 400 });
+    const r = await fetch(u, { cf: { cacheTtl: 60 } });
+    const h = new Headers(r.headers);
+    h.set('access-control-allow-origin', '*');
+    return new Response(r.body, { status: r.status, headers: h });
+  }
+}</pre>
+        它只轉發 <code>opendata.cwa.gov.tw</code>，不經手你的授權碼以外的任何東西
+        （授權碼仍然會出現在網址裡，所以<b>不要把 Worker 網址給別人</b>）。</div>
+    </details>
     <span class="sub"><code>O-A0039-001</code> 是<b>過去 1 小時閃電偵測資料</b>，
       一筆一個落雷點，有經緯度、時間，以及<b>雲對地／雲間</b>的分別。
       <b>只有雲對地會打到地面設備</b>，程式分開計算——官方樣本裡 124 筆中有 91 筆是雲間，
@@ -6106,6 +6286,11 @@ function renderSettings() {
   bind('#c_ltnSet', e => { c.ltnSet = e.target.value.trim(); save(); });
   bind('#c_ltnKm', e => { c.ltnKm = clamp(+e.target.value || 15, 1, 100); save(); renderTyphoon({}); });
   bind('#c_ltnUrl', e => { c.ltnUrl = e.target.value.trim(); save(); });
+  bind('#c_ltnProxy', e => { c.ltnProxy = e.target.value.trim(); save(); });
+  const lb = $('#c_ltnFileBtn');
+  if (lb) lb.onclick = () => $('#c_ltnFile').click();
+  const lf = $('#c_ltnFile');
+  if (lf) lf.onchange = importLightningFile;
   bind('#c_bfShut', e => { c.bfShut = +e.target.value; save(); refreshAll(); });
   bind('#c_bfEmerg', e => { c.bfEmerg = +e.target.value; save(); refreshAll(); });
   bind('#c_bfResume', e => { c.bfResume = +e.target.value; save(); refreshAll(); });
@@ -6879,6 +7064,7 @@ let _windyReady = null;
 function renderWindyIfReady() { if (_windyReady) _windyReady(); }
 
 window.setWxLoc = setWxLoc; window.locateMe = locateMe; window.setWxMode = setWxMode;
+window.importLightningFile = importLightningFile;
 window.exportInvite = exportInvite; window.exportSyncPack = exportSyncPack;
 window.unbindPeer = unbindPeer; window.rebindPeer = rebindPeer;
 window.forgetPeer = forgetPeer; window.leaveTeam = leaveTeam;
