@@ -325,6 +325,9 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
 .seg.tysub{margin-bottom:0.75rem;flex-wrap:wrap}
 .seg.tysub button{flex:1 0 calc(25% - 1px)}
 
+/* 天氣地點下拉。旁邊要留位置給「重新定位」,所以不吃滿整行。 */
+.wxsel{flex:1 1 auto;min-width:0;padding-top:0.5rem;padding-bottom:0.5rem}
+
 /* 概況頁的三行摘要。每一行是一顆按鈕,按下去跳到那一頁 ——
    分頁多了之後,「警報怎麼樣了」不該還要自己去猜按哪一格。 */
 .glance{display:flex;align-items:center;gap:0.625rem;width:100%;text-align:left;
@@ -742,12 +745,19 @@ function blankDB() {
       sort: 'ns', listSort: 'ns', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
       // 鄉鎮天氣預報資料集代號。留空 = 不抓那一支。
       wx3h: WX_3H_DEFAULT, wxWk: WX_WK_DEFAULT,
+      // 天氣要看哪裡：'' = 清單第一站、'__geo__' = 現在位置、其餘 = 站臺 id
+      wxLoc: '',
     },
     /* ctl：本次管制期間。start=0 代表還沒開始管制。
        沒有這個概念的話,站臺的 at（「從什麼時候開始是這個狀態」）會被當成
        「剛剛做了這個動作」,於是颱風還沒來、什麼都還沒做,時序上卻一整排「完成開機」。 */
     ctl: { start: 0, end: 0, ty: '' },
-    since: 0, tpl: 'A', nsMigrated: true, terrMigrated: true,
+    /* 團隊共用。team=null 代表沒有加入任何團隊(單機使用,跟以前一樣)。
+       me 是這台裝置在團隊裡的身分;peers 是收過誰的同步包。 */
+    team: null,
+    me: { id: '', name: '' },
+    peers: [],
+    since: 0, tpl: 'A', nsMigrated: true, terrMigrated: true, mtMigrated: false,
   };
 }
 
@@ -791,6 +801,16 @@ let DB = blankDB();
       DB.terrMigrated = true;
       setTimeout(save, 0);
     }
+    /* 舊存檔的站臺沒有 mt。用 at 當起點 —— 那是我們對「這筆最後何時
+       被動過」唯一知道的事。不補的話 mt 是 undefined,同步比大小時
+       `undefined > n` 恆為 false,舊裝置送出去的東西永遠不會被採用。 */
+    if (!o.mtMigrated) {
+      DB.stations.forEach(x => { if (!Number.isFinite(x.mt)) x.mt = Number.isFinite(x.at) ? x.at : 0; });
+      DB.mtMigrated = true;
+      setTimeout(save, 0);
+    }
+    if (!Array.isArray(DB.peers)) DB.peers = [];
+    if (!DB.me || typeof DB.me !== 'object') DB.me = { id: '', name: '' };
     if (!o.nsMigrated) {
       if (DB.cfg.sort === 'custom') DB.cfg.sort = 'ns';
       DB.nsMigrated = true;
@@ -1102,7 +1122,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v34';
+const APP_VER = 'v35';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2776,7 +2796,7 @@ $('#eqBody').addEventListener('click', e => {
 function setStatus(id, to) {
   const s = DB.stations.find(x => x.id === id); if (!s) return;
   const from = s.status;
-  s.status = to; s.at = Date.now();
+  s.status = to; s.at = Date.now(); s.mt = Date.now();
   if (to === 'on') s.hum = null;
   DB.log.push({ t: Date.now(), name: s.name, from, to, at: s.at });
   save(); renderStations(); renderTyphoon({});
@@ -3027,6 +3047,86 @@ function myCounties() {
    ② **未來 2 天**:鄉鎮預報逐 3 小時 —— 照原始時距,不內插成 1 小時。
    ③ **第 3 天起**:1 週預報,12 小時一格,只講早上／晚上。
    每一段都標明是實測還是預報,這是這支程式一貫的規矩。          */
+/* ── 天氣要看哪裡 ─────────────────────────────────────────
+   以前是「清單裡第一個有座標的站臺」—— 那是**實作的順序**,不是
+   使用者的選擇。值班的人手上可能有五個站,想看的常常不是第一個;
+   人也可能就站在現場,那時最準的參考點是「我現在人在這裡」。      */
+const WXLOC_GEO = '__geo__';
+let GEO = null, GEO_ERR = '', GEO_BUSY = false;
+
+// 可選的站臺:要有座標才談得上天氣。排序沿用設定裡的清單排序（預設由北至南）。
+const wxSites = () => sortForList(
+  DB.stations.filter(x => IS_LIVE(x) && Number.isFinite(x.lat) && Number.isFinite(x.lng)));
+
+function wxSite() {
+  const pick = DB.cfg.wxLoc || '';
+  if (pick === WXLOC_GEO) {
+    return GEO
+      ? { id: WXLOC_GEO, name: '現在位置', lat: GEO.lat, lng: GEO.lng, geo: true, at: GEO.at }
+      : { id: WXLOC_GEO, name: '現在位置', lat: NaN, lng: NaN, geo: true, pending: true };
+  }
+  const list = wxSites();
+  if (pick) {
+    const hit = list.find(x => x.id === pick);
+    if (hit) return hit;
+    /* 選過的站臺被刪掉或被改成未建置了。不要靜靜換一站當成沒事 ——
+       畫面上會是別的地方的天氣,而使用者以為還是原本那個。 */
+    return { id: pick, name: '（已選的站臺不存在）', lat: NaN, lng: NaN, gone: true };
+  }
+  return list[0] || null;
+}
+
+function locateMe() {
+  if (!navigator.geolocation) { GEO_ERR = '這個瀏覽器沒有定位功能'; renderTyphoon({}); return; }
+  GEO_BUSY = true; GEO_ERR = ''; renderTyphoon({});
+  navigator.geolocation.getCurrentPosition(
+    p => {
+      GEO = { lat: p.coords.latitude, lng: p.coords.longitude, at: Date.now(),
+        acc: Math.round(p.coords.accuracy || 0) };
+      GEO_BUSY = false; GEO_ERR = '';
+      DB.cfg.wxLoc = WXLOC_GEO; save(); renderTyphoon({});
+    },
+    e => {
+      GEO_BUSY = false;
+      /* 講清楚是哪一種失敗。「定位失敗」四個字讓人不知道要去開權限
+         還是走到窗邊 —— 這兩件事要做的動作完全不同。 */
+      GEO_ERR = e && e.code === 1 ? '定位權限被拒絕，請到瀏覽器設定允許此網站取用位置'
+        : e && e.code === 2 ? '取不到位置訊號（室內或關閉定位服務時常見）'
+        : e && e.code === 3 ? '定位逾時，請再試一次'
+        : '定位失敗';
+      renderTyphoon({});
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 5 * 60000 });
+}
+
+function setWxLoc(v) {
+  if (v === WXLOC_GEO && !GEO) { locateMe(); return; }   // 選了就順手定位一次
+  DB.cfg.wxLoc = v; save(); renderTyphoon({});
+}
+
+/* 地點下拉。第一個是「現在位置」,之後是站臺,照清單排序。 */
+function wxPicker() {
+  const cur = DB.cfg.wxLoc || '';
+  const list = wxSites();
+  const opt = (v, label, sel) =>
+    `<option value="${esc(v)}"${sel ? ' selected' : ''}>${esc(label)}</option>`;
+  const geoLabel = GEO ? `現在位置（±${GEO.acc} m）` : '現在位置（按下取得）';
+  return `<div style="display:flex;align-items:center;gap:0.375rem;margin-bottom:0.5rem">
+    <select id="wxLoc" class="wxsel" aria-label="天氣地點"
+      onchange="setWxLoc(this.value)">
+      ${opt(WXLOC_GEO, geoLabel, cur === WXLOC_GEO)}
+      ${list.length ? '<optgroup label="站臺">' + list.map(x =>
+        opt(x.id, x.name, cur ? cur === x.id : x === list[0])).join('') + '</optgroup>' : ''}
+    </select>
+    ${cur === WXLOC_GEO
+      ? `<button class="act" onclick="locateMe()"${GEO_BUSY ? ' disabled' : ''}>${
+          GEO_BUSY ? '定位中…' : '重新定位'}</button>` : ''}</div>`
+  + (GEO_ERR ? `<div class="msg e" style="margin:0 0 0.5rem">${esc(GEO_ERR)}</div>` : '')
+  + (!list.length && cur !== WXLOC_GEO
+      ? '<div class="msg i" style="margin:0 0 0.5rem">還沒有任何有座標的站臺。'
+        + '可以先用「現在位置」，或到站臺頁替站臺補上經緯度。</div>' : '');
+}
+
 function nowRain(st) {
   const rb = nearestRain(st);
   if (!rb) return null;
@@ -3074,8 +3174,8 @@ function glanceCard() {
   }
 
   // 天氣：實測在前（現在下不下雨是事實）,預報在後
-  const st = DB.stations.find(x => IS_LIVE(x) && Number.isFinite(x.lat))
-    || DB.stations.find(x => IS_LIVE(x));
+  const st0 = wxSite();
+  const st = (st0 && Number.isFinite(st0.lat)) ? st0 : null;
   const rn = st ? nowRain(st) : null;
   const tf = st ? townFor(st) : null;
   let wxSub = '';
@@ -3088,9 +3188,12 @@ function glanceCard() {
   } else {
     wxSub = WX_ERR ? '預報取得失敗，點開看原因' : '尚未取得鄉鎮天氣預報';
   }
+  // 摘要要寫出是哪裡的天氣 —— 現在地點可以選了,不講的話會看錯地方
   out.push(row('天氣', 'wx',
-    rn ? (rn.raining ? '正在下雨' : '目前沒有下雨') : '無雨量站可判斷',
-    wxSub, rn && rn.raining ? 'var(--acc)' : 'var(--fg2)'));
+    st ? (rn ? (rn.raining ? '正在下雨' : '目前沒有下雨') : '無雨量站可判斷')
+       : (st0 && st0.pending ? '尚未取得目前位置' : '尚未選定地點'),
+    st ? `${esc(st.name)}　${wxSub}` : '點開選一個地點',
+    rn && rn.raining ? 'var(--acc)' : 'var(--fg2)'));
 
   // 停班停課：官方公告優先,沒有公告才講推估
   const offHit = (DGPA_LIVE || []).filter(r => r.alert);
@@ -3112,12 +3215,19 @@ function glanceCard() {
 }
 
 function wxCard() {
-  // 以第一個有座標的站臺為準;沒有站臺就不顯示 —— 沒有地點的天氣沒有意義
-  const st = DB.stations.find(x => IS_LIVE(x) && Number.isFinite(x.lat))
-    || DB.stations.find(x => IS_LIVE(x));
-  if (!st) return '';
-
-  const head = `<div class="sec"><h2>天氣　${esc(st.name)}</h2></div>`;
+  const st = wxSite();
+  const head = `<div class="sec"><h2>天氣</h2></div>` + wxPicker();
+  /* 地點選不出來時,下拉還是要留著 —— 沒有下拉就沒有辦法改選,
+     使用者只會看到一片空白而不知道該按哪裡。 */
+  if (!st || st.gone) {
+    return head + `<div class="msg ${st ? 'e' : 'i'}">${st
+      ? '原本選的站臺已經不存在了，請從上面重新選一個地點。'
+      : '還沒有可用的地點。'}</div>`;
+  }
+  if (st.pending) {
+    return head + `<div class="msg i">${GEO_BUSY ? '定位中…'
+      : '尚未取得目前位置。按上面的「重新定位」，或改選一個站臺。'}</div>`;
+  }
   const rn = nowRain(st);
   const nowLine = rn
     ? `<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">
@@ -3452,13 +3562,13 @@ function briefText() {
      現在有沒有在下雨是**實測**（雨量站 10 分鐘累積）,預報是鄉鎮預報**逐 3 小時**。
      兩件事分開講,不要混在一起 —— 值班回報時「現在」跟「等一下」的責任不一樣。 */
   {
-    const wst = DB.stations.find(x => IS_LIVE(x) && Number.isFinite(x.lat))
-      || DB.stations.find(x => IS_LIVE(x));
+    const wst0 = wxSite();
+    const wst = (wst0 && Number.isFinite(wst0.lat)) ? wst0 : null;
     const rn = wst ? nowRain(wst) : null;
     const tf = wst ? townFor(wst) : null;
     if (rn || tf) {
       L.push('');
-      L.push(`天氣（${wst.name}）`);
+      L.push(`天氣（${wst.name}${wst.geo ? '，GPS 定位' : ''}）`);
       if (rn) {
         L.push(`${IN}目前天候：${rn.raining ? '正在降雨' : '未降雨'}` +
           `（${rn.name}實測，10 分鐘 ${rn.m10 == null ? '—' : rn.m10} 毫米、` +
@@ -4632,6 +4742,11 @@ function openStation(id) {
           const v = parseFloat(calIn.value);
           d.calManual = Number.isFinite(v) && v > 0 ? clamp(v, CAL_LO, CAL_HI) : null;
         }
+        /* mt＝最後一次被人改動的時刻。跟 at（「從什麼時候開始是這個狀態」）
+           不是同一件事:改座標、改名字不會動到 at,但那確實是一次修改。
+           團隊同步要靠 mt 決定誰比較新 —— 只看 at 的話,對方補上的經緯度
+           永遠傳不過來。 */
+        d.mt = Date.now();
         if (s) { if (s.status !== d.status) DB.log.push({ t: Date.now(), name, from: s.status, to: d.status, at: d.at }); Object.assign(s, d); }
         else { DB.stations.push(Object.assign({ id: uid() }, d)); DB.log.push({ t: Date.now(), name, from: null, to: d.status, at: d.at }); }
         save(); rebuildModel(); renderStations(); renderTyphoon({}); renderSettings(); closeSheet(); toast('已儲存');
@@ -4860,6 +4975,73 @@ function renderSettings() {
           ${Number.isFinite(s.lat) ? fmtCoord(s.lat, s.lng) : '未設座標'}</span></button>`).join('')}</div>` : ''}
   </div>
 
+  <div class="sec"><h2>團隊共用</h2></div>
+  <div class="card pad" style="margin-bottom:1.125rem">
+    ${DB.team ? `
+      <div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem">
+        <b style="font-size:1.0625rem">${esc(DB.team.name)}</b>
+        <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">加入於 ${fmtShort(DB.team.at)}</span>
+      </div>
+      <label class="fld" style="margin-bottom:0.5rem"><span class="lb">這台裝置在團隊裡的名稱</span>
+        <input type="text" id="c_meName" value="${esc(DB.me.name || '')}"
+          placeholder="${esc(DB.cfg.unit || '例：值班台一')}" maxlength="20" autocomplete="off">
+        <span class="sub">會寫在你送出的同步包裡，讓對方知道是誰傳的。留空就用單位名稱。</span></label>
+      <div class="btnrow">
+        <button class="btn pri" onclick="exportSyncPack()">匯出同步包</button>
+        <button class="btn" id="c_imp2">匯入檔案</button>
+      </div>
+      <div class="btnrow" style="margin-top:0.375rem">
+        <button class="btn sm" onclick="exportInvite()">匯出邀請檔</button>
+        <button class="btn sm dg" onclick="leaveTeam()">離開團隊</button>
+      </div>
+      ${DB.peers.length ? `<div style="margin-top:0.75rem">
+        <div class="mono" style="font-size:0.6875rem;color:var(--fg4);margin-bottom:0.25rem">成員</div>
+        ${DB.peers.map(p => `<div style="display:flex;align-items:center;gap:0.5rem;
+          padding:0.4375rem 0;border-top:1px solid var(--edge)">
+          <span style="flex:1;min-width:0">
+            <b style="color:${p.blocked ? 'var(--fg4)' : 'var(--fg)'}">${esc(p.name)}</b>
+            <span class="mono" style="font-size:0.6875rem;color:var(--fg4);display:block">${
+              p.blocked ? '已解綁，拒收同步包'
+                : p.lastRecv ? '最後收到 ' + fmtShort(p.lastRecv) : '尚未收過同步包'}</span></span>
+          ${p.blocked
+            ? `<button class="btn sm" onclick="rebindPeer('${esc(p.id)}')">恢復</button>`
+            : `<button class="btn sm" onclick="unbindPeer('${esc(p.id)}')">解綁</button>`}
+          <button class="btn sm" onclick="forgetPeer('${esc(p.id)}')">移除</button>
+        </div>`).join('')}</div>` : `<p class="hint" style="margin-top:0.5rem">
+          還沒有任何成員。把「邀請檔」傳給對方，他匯入之後再回傳一份同步包，就會出現在這裡。</p>`}
+    ` : `
+      <label class="fld" style="margin-bottom:0.5rem"><span class="lb">建立團隊</span>
+        <input type="text" id="c_teamName" placeholder="例：北區值班" maxlength="20" autocomplete="off">
+        <span class="sub">建立之後匯出「邀請檔」傳給對方；對方匯入就綁定了。</span></label>
+      <div class="btnrow">
+        <button class="btn pri" id="c_teamNew">建立團隊</button>
+        <button class="btn" id="c_imp3">匯入邀請檔</button>
+      </div>
+    `}
+    <details style="margin-top:0.625rem">
+      <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
+        這是怎麼運作的　·　點開</summary>
+      <p class="hint" style="margin:0.375rem 0">
+        <b>先講做不到的：真正的即時點對點，這支程式做不到。</b>
+        WebRTC 要先交換連線資訊才連得起來，那需要一台雙方都連得到的伺服器。
+        手動貼一次是可以連上，但下一次還要再貼一次——對值班台來說比不做還糟。
+        這支程式是靜態網頁，沒有後端。<br><br>
+        <b>實際的做法是「配對檔＋同步包」：</b>
+        一方建立團隊、匯出<b>邀請檔</b>，用你們本來就在用的管道傳過去（LINE、AirDrop、電子郵件都行），
+        對方匯入就綁定。之後任何一方匯出<b>同步包</b>，對方匯入就把站臺狀態併進來。
+        <b>不需要兩邊同時在線</b>，不怕 NAT，離線也能事後補。<br><br>
+        <b>合併規則</b>：依站臺名稱比對，<b>誰的比較新誰生效</b>（比的是最後修改時間）。
+        <b>絕不刪除站臺</b>——一份三天前的同步包如果能刪站，匯入一次就會把新加的全部抹掉。
+        套用之前一定會先列出「新增幾站、更新哪幾站」讓你確認。<br><br>
+        <b>同步包不含授權碼、開啟密碼與來源網址</b>，那是這台裝置的東西。<br><br>
+        <b>簽章與安全</b>：同步包用團隊金鑰做 HMAC-SHA256 簽章，所以別人隨手丟一個檔案進來
+        <b>不會</b>默默改掉你的狀態。但<b>金鑰就在邀請檔裡</b>——邀請檔傳得多安全，這件事就有多安全。
+        它是共用密鑰，不是公鑰。<br><br>
+        <b>解綁</b>：把某個成員設為拒收，之後他的同步包一律不套用。已經併進來的資料不會被移除
+        （那是既成的資料，刪掉才是真的危險）。</p>
+    </details>
+  </div>
+
   <div class="sec"><h2>資料與安全</h2></div>
   <div class="card pad" style="margin-bottom:1.125rem">
     <div class="sw"><div class="sw-t"><b>開啟密碼</b>
@@ -4897,7 +5079,7 @@ function renderSettings() {
       <b>僅設定</b>：門檻、用語、授權碼、來源網址與類別定義，<b>不含任何站臺</b>——換新機時
       先把設定帶過去最方便。<br>
       完整備份匯入時會問要<b>取代</b>還是<b>合併</b>。
-      <b style="color:var(--sb)">完整與僅設定含授權碼，等同憑證，不要外傳；
+      <b style="color:var(--sb)">完整與僅設定含授權碼與團隊金鑰，等同憑證，不要外傳；
       要給別人請用「加密匯出」。</b>開啟密碼也在裡面，但匯入時會先問要不要一併還原。</p>
     <div class="btnrow" style="margin-top:0.5rem">
       <button class="btn dg wide" id="c_wipe">清除本機全部資料</button></div>
@@ -4941,7 +5123,8 @@ function renderSettings() {
   <div class="card pad">
     <p class="hint">
       <b style="color:var(--fg2)">風哨 GALEPOST</b> — 颱風期間岸際設備開關待機管制。<br><br>
-      單檔離線程式。所有資料只寫入本機瀏覽器儲存空間，不上傳、不同步、不含任何預設的單位或站臺資料。
+      單檔離線程式。所有資料只寫入本機瀏覽器儲存空間，不含任何預設的單位或站臺資料，
+      <b>不會自動上傳到任何地方</b>——團隊共用是你自己匯出檔案、自己傳給對方，沒有伺服器經手。
       颱風資料僅在您按下更新時，才向中央氣象署或 GDACS 發出查詢。<br><br>
       關機、復機與警報時機皆為模型推估，供先期作業參考。正式研判請以中央氣象署警報單與單位規定為準。
     </p>
@@ -5004,6 +5187,17 @@ function renderSettings() {
   $('#c_expE').onclick = () => doExport(true);
   $('#c_imp').onclick = () => $('#c_file').click();
   $('#c_file').onchange = doImport;
+  // 團隊那一區的匯入按鈕走同一個檔案輸入 —— 邀請檔、同步包、備份檔
+  // 都由 applyBackupText 依 galepost 標籤分辨,使用者不必先選對按鈕。
+  const impT = $('#c_imp2') || $('#c_imp3');
+  if (impT) impT.onclick = () => $('#c_file').click();
+  const tn = $('#c_teamNew');
+  if (tn) tn.onclick = () => {
+    const v = ($('#c_teamName').value || '').trim();
+    if (!v) return toast('請先填團隊名稱');
+    createTeam(v);
+  };
+  bind('#c_meName', e => { DB.me.name = e.target.value.trim(); save(); });
   {
     const go = $('#c_pasteGo');
     if (go) go.onclick = () => {
@@ -5055,6 +5249,224 @@ const EXP_SCOPES = () => [
   { k: 'cfg', label: '僅設定（不含站臺）' },
 ];
 let expScope = 'all';
+
+/* ═══ 團隊共用 ═══════════════════════════════════════════
+   使用者要的是「把一個檔案給某人之後,兩邊就能互通,也能解綁」。
+
+   **先講做不到的：真正的即時點對點，這支程式做不到。**
+   WebRTC 要先交換 SDP 與 ICE（signalling）才連得起來,那需要一台
+   雙方都連得到的伺服器。手動貼一次 offer/answer 是可以連起來,但
+   ICE 候選會過期、IP 會變,**下一次還要再貼一次** —— 對值班台來說
+   比不做還糟。這支程式是 GitHub Pages 上的靜態檔,沒有後端。
+
+   **做得到而且真的堪用的：配對檔 + 同步包。**
+   ① 一方建立團隊,匯出一個**邀請檔**,用你們本來就在用的管道傳過去
+      （LINE、AirDrop、電子郵件都行）。對方匯入就綁定了。
+   ② 之後任何一方匯出**同步包**,對方匯入就把站臺狀態併進來。
+      不需要兩邊同時在線,不怕 NAT,離線也能事後補。
+   ③ **解綁**：移除某個成員（之後拒收他的同步包）,或整個離開團隊。
+
+   同步包用團隊金鑰做 HMAC-SHA256 簽章。意義是:別人隨手丟一個檔案
+   進來**不會**默默改掉你的站臺狀態。但金鑰本身就在邀請檔裡 ——
+   **邀請檔傳得多安全,這件事就有多安全**,它是共用密鑰不是公鑰。   */
+
+const TEAM_TAG = 'team1', SYNC_TAG = 'sync1';
+
+// 簽章要對「同一個字串」算。物件的鍵順序經過 JSON 來回可能不同,
+// 所以先遞迴排序鍵再序列化 —— 兩邊算出來才會是同一串。
+function canon(v) {
+  if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
+async function hmacB64(keyB64, msg) {
+  const k = await crypto.subtle.importKey('raw', b64d(keyB64),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return b64e(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(msg)));
+}
+
+function meId() {
+  if (!DB.me.id) { DB.me.id = uid(); save(); }
+  return DB.me.id;
+}
+const meName = () => (DB.me.name || DB.cfg.unit || '未命名裝置');
+
+function createTeam(name) {
+  const key = b64e(crypto.getRandomValues(new Uint8Array(32)));
+  DB.team = { id: uid(), name: String(name || '').trim() || '未命名團隊', key, at: Date.now() };
+  meId();
+  save(); renderSettings();
+  toast('已建立團隊，接著匯出邀請檔傳給對方');
+}
+
+function exportInvite() {
+  if (!DB.team) return;
+  download({ galepost: TEAM_TAG, app: APP_VER, at: new Date().toISOString(),
+    team: DB.team, from: { id: meId(), name: meName() } },
+    `風哨團隊邀請_${DB.team.name}_${stamp()}.json`);
+  toast('已下載邀請檔。請用你們本來就在用的管道傳給對方');
+}
+
+function exportSyncPack() {
+  if (!DB.team) return;
+  /* 只送真正需要共用的欄位。授權碼、開啟密碼、代理網址一律不送 ——
+     那是這台裝置的東西,不該因為分享站臺狀態就一起跑到別人手上。 */
+  const body = {
+    team: DB.team.id,
+    from: { id: meId(), name: meName() },
+    at: Date.now(),
+    types: DB.types.map(t => ({ label: t.label, report: t.report,
+      terrain: t.terrain, noReport: !!t.noReport, icon: t.icon || '' })),
+    stations: DB.stations.map(x => ({
+      name: x.name, type: (DB.types.find(t => t.id === x.type) || {}).label || '',
+      status: x.status, at: x.at, mt: Number.isFinite(x.mt) ? x.mt : x.at,
+      hum: x.hum == null ? null : x.hum, note: x.note || '',
+      lat: Number.isFinite(x.lat) ? x.lat : null, lng: Number.isFinite(x.lng) ? x.lng : null,
+      terrain: x.terrain || null, county: x.county || '',
+    })),
+    ctl: DB.ctl, log: DB.log.slice(-200),
+  };
+  hmacB64(DB.team.key, canon(body)).then(sig => {
+    download({ galepost: SYNC_TAG, app: APP_VER, sig, body },
+      `風哨同步_${meName()}_${stamp()}.json`);
+    toast(`已下載同步包（${body.stations.length} 站）`);
+  }).catch(e => toast('簽章失敗：' + e.message));
+}
+
+/* 收到的同步包要先算出「會變成什麼樣」再問要不要套用。
+   默默合併是資料消失的標準劇本 —— 值班的人要先看得到差異。 */
+function syncDiff(body) {
+  const add = [], upd = [], skip = [];
+  for (const r of (body.stations || [])) {
+    if (!r || !r.name) continue;
+    const ex = DB.stations.find(x => x.name === r.name);
+    if (!ex) { add.push(r.name); continue; }
+    const mine = Number.isFinite(ex.mt) ? ex.mt : (ex.at || 0);
+    const theirs = Number.isFinite(r.mt) ? r.mt : (r.at || 0);
+    if (theirs > mine) upd.push(`${r.name}：${S_LABEL[ex.status] || ex.status} → ${S_LABEL[r.status] || r.status}`);
+    else skip.push(r.name);
+  }
+  return { add, upd, skip };
+}
+
+async function importSyncPack(o) {
+  const body = o.body;
+  if (!body || typeof body !== 'object') throw new Error('同步包的內容不完整');
+  if (!DB.team) throw new Error('這台裝置還沒有加入任何團隊。請先匯入邀請檔');
+  if (body.team !== DB.team.id) throw new Error('這個同步包屬於別的團隊，不會套用');
+
+  const want = await hmacB64(DB.team.key, canon(body));
+  /* 簽章對不上就停手。可能是被改過,也可能只是對方用的金鑰不同 ——
+     兩種都不該套用,因為兩種都表示「這不是我這個團隊的資料」。 */
+  if (want !== o.sig) throw new Error('簽章驗證失敗，這個檔案不是用本團隊的金鑰產生的（或中途被改過）');
+
+  const from = body.from || {};
+  const blocked = DB.peers.find(p => p.id === from.id && p.blocked);
+  if (blocked) throw new Error(`「${blocked.name}」已被解綁，不再接受他的同步包`);
+
+  const d = syncDiff(body);
+  if (!d.add.length && !d.upd.length) {
+    toast(`來自「${from.name || '未知'}」：${d.skip.length} 站都比本機舊，沒有變動`);
+    return;
+  }
+  const lines = [];
+  if (d.add.length) lines.push(`新增 ${d.add.length} 站：${d.add.slice(0, 6).join('、')}${d.add.length > 6 ? '…' : ''}`);
+  if (d.upd.length) lines.push(`更新 ${d.upd.length} 站：\n　${d.upd.slice(0, 8).join('\n　')}${d.upd.length > 8 ? '\n　…' : ''}`);
+  if (d.skip.length) lines.push(`${d.skip.length} 站本機比較新，維持不動`);
+  if (!confirm(`來自「${from.name || '未知裝置'}」的同步包（${fmtShort(body.at)}）\n\n`
+    + lines.join('\n') + '\n\n要套用嗎？（不會刪除任何站臺）')) return;
+
+  // 類別照 label 對回去,對不到就整個加進來
+  const tmap = {};
+  for (const t of (body.types || [])) tmap[t.label] = adoptType(t);
+
+  let add = 0, upd = 0;
+  for (const r of (body.stations || [])) {
+    if (!r || !r.name) continue;
+    const tid = tmap[r.type] || (DB.types[0] || {}).id;
+    const ex = DB.stations.find(x => x.name === r.name);
+    const rec = { name: r.name, type: tid, status: r.status, at: r.at,
+      mt: Number.isFinite(r.mt) ? r.mt : r.at, hum: r.hum, note: r.note || '',
+      lat: Number.isFinite(r.lat) ? r.lat : null, lng: Number.isFinite(r.lng) ? r.lng : null,
+      terrain: r.terrain || null, county: r.county || '' };
+    if (!ex) { DB.stations.push(Object.assign({ id: uid() }, rec)); add++; continue; }
+    const mine = Number.isFinite(ex.mt) ? ex.mt : (ex.at || 0);
+    const theirs = rec.mt;
+    /* 只有對方比較新才覆蓋。**絕不刪除** —— 一個過期的同步包如果能刪站,
+       某人拿三天前的檔案匯入就會把新加的站臺全部抹掉。 */
+    if (theirs > mine) { Object.assign(ex, rec, { id: ex.id }); upd++; }
+  }
+
+  // 紀錄取聯集,重複的（同名同時刻同狀態）跳過
+  const seen = new Set((DB.log || []).map(x => `${x.name}|${x.at}|${x.to}`));
+  for (const l of (body.log || [])) {
+    const k = `${l.name}|${l.at}|${l.to}`;
+    if (!seen.has(k)) { DB.log.push(l); seen.add(k); }
+  }
+  DB.log.sort((x, y) => x.at - y.at);
+
+  // 本次管制取比較晚開始的那一次
+  if (body.ctl && body.ctl.start && body.ctl.start > (DB.ctl.start || 0)) DB.ctl = body.ctl;
+
+  // 記下這位成員,之後才有得解綁
+  if (from.id) {
+    const p = DB.peers.find(x => x.id === from.id);
+    if (p) { p.name = from.name || p.name; p.lastRecv = Date.now(); }
+    else DB.peers.push({ id: from.id, name: from.name || '未命名', at: Date.now(), lastRecv: Date.now(), blocked: false });
+  }
+
+  save(); refreshAll(); renderSettings(); syncForm();
+  toast(`已同步：新增 ${add}、更新 ${upd}`);
+}
+
+function importInvite(o) {
+  const t = o.team;
+  if (!t || !t.id || !t.key) throw new Error('邀請檔的內容不完整');
+  if (DB.team && DB.team.id !== t.id
+    && !confirm(`這台裝置已經在團隊「${DB.team.name}」裡。\n\n`
+      + `要改加入「${t.name}」嗎？原本團隊的成員清單會被清掉（站臺與紀錄不會動）。`)) return;
+  DB.team = { id: t.id, name: t.name || '未命名團隊', key: t.key, at: Date.now() };
+  if (!DB.peers.length || (DB.team && DB.team.id !== t.id)) DB.peers = [];
+  meId();
+  const f = o.from || {};
+  if (f.id && f.id !== DB.me.id && !DB.peers.some(p => p.id === f.id)) {
+    DB.peers.push({ id: f.id, name: f.name || '未命名', at: Date.now(), lastRecv: 0, blocked: false });
+  }
+  save(); renderSettings();
+  toast(`已加入團隊「${DB.team.name}」`);
+}
+
+function unbindPeer(id) {
+  const p = DB.peers.find(x => x.id === id); if (!p) return;
+  if (!confirm(`解綁「${p.name}」？\n\n之後他的同步包會被拒收。`
+    + '已經併進來的站臺與紀錄不會被移除（那是既成的資料，刪掉才是真的危險）。')) return;
+  p.blocked = true; p.at = Date.now();
+  save(); renderSettings();
+  toast(`已解綁「${p.name}」`);
+}
+function rebindPeer(id) {
+  const p = DB.peers.find(x => x.id === id); if (!p) return;
+  p.blocked = false; save(); renderSettings(); toast(`已恢復接收「${p.name}」`);
+}
+function forgetPeer(id) {
+  const p = DB.peers.find(x => x.id === id); if (!p) return;
+  if (!confirm(`從清單移除「${p.name}」？\n\n`
+    + '注意：移除之後他的同步包會再度被接受（因為已經不在拒收名單上）。\n'
+    + '只是想擋掉他的話，用「解綁」不要用這個。')) return;
+  DB.peers = DB.peers.filter(x => x.id !== id);
+  save(); renderSettings(); toast('已從清單移除');
+}
+function leaveTeam() {
+  if (!DB.team) return;
+  if (!confirm(`離開團隊「${DB.team.name}」？\n\n`
+    + '之後不再接受任何同步包，也不能再匯出同步包。\n'
+    + '站臺、紀錄與設定都不會被刪除。')) return;
+  DB.team = null; DB.peers = [];
+  save(); renderSettings(); toast('已離開團隊');
+}
 
 function exportPayload(scope) {
   const sc = scope || 'all';
@@ -5203,6 +5615,10 @@ async function applyBackup(oIn) {
   {
     {
       let o = oIn;
+      /* 邀請檔與同步包走同一個「匯入」入口 —— 使用者手上就是一個檔案,
+         不該還要先分辨它是哪一種再按對應的按鈕。 */
+      if (o && o.galepost === TEAM_TAG) { importInvite(o); return; }
+      if (o && o.galepost === SYNC_TAG) { await importSyncPack(o); return; }
       if (o && o.galepost === 'enc1') {
         const pw = prompt('這是加密備份，請輸入密碼：');
         if (!pw) return;
@@ -5502,6 +5918,10 @@ function goTySub(k) {
 let _windyReady = null;
 function renderWindyIfReady() { if (_windyReady) _windyReady(); }
 
+window.setWxLoc = setWxLoc; window.locateMe = locateMe;
+window.exportInvite = exportInvite; window.exportSyncPack = exportSyncPack;
+window.unbindPeer = unbindPeer; window.rebindPeer = rebindPeer;
+window.forgetPeer = forgetPeer; window.leaveTeam = leaveTeam;
 window.pickTyphoon = pickTyphoon; window.goTySub = goTySub; window.copyBrief = copyBrief; window.onTimeline = onTimeline;
 window.checkUpdate = checkUpdate; window.fetchDgpa = fetchDgpa;
 
