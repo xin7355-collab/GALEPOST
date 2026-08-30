@@ -724,6 +724,13 @@ const DGPA_PROXY_DEFAULT = 'https://proxy.aliceric27.workers.dev/?url=';
 const WX_3H_DEFAULT = 'F-D0047-089';    // 臺灣各鄉鎮未來 2 天(逐 3 小時)天氣預報
 const WX_WK_DEFAULT = 'F-D0047-091';    // 臺灣各鄉鎮未來 1 週天氣預報
 
+/* 閃電（落雷）定位資料。使用者提供了官方檔案,證明它確實存在 ——
+   我先前說「氣象署沒有免費的閃電定位資料集」是錯的,這裡改正。
+   O-A0039-001 是「過去 1 小時閃電偵測資料」,一筆一個落雷點,
+   有經緯度、時間、以及**雲對地／雲間**的分別。
+   對站臺設備真正有威脅的是**雲對地**。 */
+const LTN_DEFAULT = 'O-A0039-001';
+
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const p2 = n => String(n).padStart(2, '0');
@@ -759,8 +766,10 @@ function blankDB() {
       sort: 'ns', listSort: 'ns', pin: '', lockMin: 0, exportCoords: true, seaBuffer: 100,
       // 鄉鎮天氣預報資料集代號。留空 = 不抓那一支。
       wx3h: WX_3H_DEFAULT, wxWk: WX_WK_DEFAULT,
-      // 天氣要看哪裡：'' = 清單第一站、'__geo__' = 現在位置、其餘 = 站臺 id
+      // 天氣要看哪裡：'' = 全部站臺、'__geo__' = 現在位置、其餘 = 站臺 id
       wxLoc: '',
+      // 閃電：資料集代號與「幾公里內算數」。留空 = 不抓。
+      ltnSet: LTN_DEFAULT, ltnKm: 15,
     },
     /* ctl：本次管制期間。start=0 代表還沒開始管制。
        沒有這個概念的話,站臺的 at（「從什麼時候開始是這個狀態」）會被當成
@@ -1136,7 +1145,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v36';
+const APP_VER = 'v37';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1655,6 +1664,149 @@ function townFor(st) {
   }
   return null;
 }
+
+/* ── 閃電（落雷）─────────────────────────────────────────
+   使用者拿官方檔案給我看,證明 O-A0039-001「過去 1 小時閃電偵測資料」
+   確實存在。我上一輪說「開放資料裡沒有免費的閃電定位資料集」是**錯的**,
+   這裡改正,並且把它做成這支程式回答「現在哪裡在打雷」的**主要來源**——
+   它是實測的落雷點,不是特報那種區域性的判斷。
+
+   一筆的內容（取自使用者提供的官方 KMZ）:
+     <name>雲間閃電 1-2026-08-30 17:05</name>
+     <description> 閃電種類: 雲間
+       時間: 2026-08-30 17:05
+       經緯度: 120.814 , 24.566</description>
+     <TimeStamp><when>2026-08-30T09:05Z</when></TimeStamp>
+     <Point><coordinates>120.814,24.566</coordinates></Point>
+   種類有「對地」與「雲間」兩種。**對地才是打到地面的那一種**,
+   對站臺設備的威脅完全不同,所以兩者一定要分開算。
+
+   這支資料集官方是以 KML／KMZ 發布的。datastore 的 JSON 端點會不會
+   一樣有,我在這個環境**無法確認** —— 所以下面的解析**兩種都接**:
+   拿到 JSON 就走 JSON,拿到 XML 就當 KML 解。抓不到就明講。      */
+let LTN = [], LTN_AT = 0, LTN_ERR = '', LTN_WIN = '';
+
+const CG_RE = /對地/;          // 「雲對地」「對地」都算;「雲間」不算
+
+function parseLightningKml(text) {
+  const doc = new DOMParser().parseFromString(text, 'text/xml');
+  if (doc.querySelector('parsererror')) return null;
+  const out = [];
+  // 標題會寫出資料涵蓋的時間區間,值班要知道這一小時是哪一小時
+  const top = doc.querySelector('Document > name');
+  if (top) LTN_WIN = top.textContent.replace(/^[^:：]*[:：]\s*/, '').trim();
+  for (const pm of doc.querySelectorAll('Placemark')) {
+    const co = pm.querySelector('Point > coordinates');
+    if (!co) continue;
+    const [lng, lat] = String(co.textContent).trim().split(',').map(parseFloat);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    const desc = (pm.querySelector('description') || {}).textContent || '';
+    const nm = (pm.querySelector('name') || {}).textContent || '';
+    const when = (pm.querySelector('TimeStamp > when') || {}).textContent || '';
+    const t = when ? Date.parse(when) : NaN;
+    out.push({ lat, lng, t: Number.isFinite(t) ? t : 0, cg: CG_RE.test(desc + nm) });
+  }
+  return out;
+}
+
+/* JSON 端點若存在,形狀我沒有看過。用遞迴找「同時具備經緯度」的物件,
+   而不是賭某一個固定路徑 —— 賭錯就是整份落空,而且是靜靜落空。 */
+function parseLightningJson(j) {
+  const out = [];
+  const seen = new Set();
+  const walk = (n, inhT, inhK) => {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) { for (const x of n) walk(x, inhT, inhK); return; }
+    const kind = String(pick(n, 'LightningType', 'lightningType', 'type', 'kind', '閃電種類') || inhK || '');
+    const tRaw = pick(n, 'LightningTime', 'lightningTime', 'DateTime', 'dateTime', 'ObsTime', 'obsTime', 'time', '時間');
+    const t = tRaw ? wxTime(typeof tRaw === 'object' ? pick(tRaw, 'DateTime', 'dateTime') : tRaw) : inhT;
+    let lat = wxNum(pick(n, 'Latitude', 'latitude', 'lat', 'CoordinateLatitude'));
+    let lng = wxNum(pick(n, 'Longitude', 'longitude', 'lon', 'lng', 'CoordinateLongitude'));
+    // 也接 "lng,lat" 這種一欄兩個值的寫法
+    const co = pick(n, 'coordinates', 'Coordinates');
+    if ((lat == null || lng == null) && typeof co === 'string') {
+      const p = co.split(',').map(parseFloat);
+      if (p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])) { lng = p[0]; lat = p[1]; }
+    }
+    if (lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      const k = `${lat},${lng},${t || 0}`;
+      if (!seen.has(k)) { seen.add(k); out.push({ lat, lng, t: t || 0, cg: CG_RE.test(kind) }); }
+    }
+    for (const k in n) walk(n[k], t || inhT, kind || inhK);
+  };
+  walk(j && j.records ? j.records : j, 0, '');
+  return out;
+}
+
+async function fetchLightning(key) {
+  const ds = (DB.cfg.ltnSet === undefined ? LTN_DEFAULT : DB.cfg.ltnSet) || '';
+  if (!ds) { LTN = []; LTN_ERR = ''; return; }
+  const proxy = (DB.cfg.cwaProxy || '').trim();
+  let text = '';
+  try {
+    const r = await fetch(
+      `${CWA_BASE}/${ds}?Authorization=${encodeURIComponent(key)}&format=JSON`,
+      { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    text = await r.text();
+  } catch (e) {
+    if (!proxy) {
+      LTN = []; LTN_ERR = `${ds}：${(e && e.message) || e}（若是 CORS 被擋，請到設定填入 CWA 代理網址）`;
+      return;
+    }
+    try {
+      const r = await fetch(proxy, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwaDataset: ds, cwaKey: key, cwaParams: {} }),
+      });
+      if (!r.ok) throw new Error('代理回應 ' + r.status);
+      text = await r.text();
+    } catch (e2) {
+      LTN = []; LTN_ERR = `${ds}：${(e2 && e2.message) || e2}`;
+      return;
+    }
+  }
+
+  const body = String(text || '').replace(/^﻿/, '').trim();
+  if (!body) { LTN = []; LTN_ERR = `${ds}：回應是空的`; return; }
+
+  let list = null;
+  if (/^[[{]/.test(body)) {
+    try { list = parseLightningJson(JSON.parse(body)); }
+    catch (e) { list = null; }
+  }
+  if ((!list || !list.length) && /^</.test(body)) list = parseLightningKml(body);
+  /* KMZ 是 ZIP,瀏覽器沒有函式庫解不開。與其默默給空白,不如講清楚
+     拿到的是哪一種東西 —— 使用者才知道要去設定裡改成 KML 還是 JSON。 */
+  if (!list && /^PK/.test(body)) {
+    LTN = []; LTN_ERR = `${ds}：回應是 KMZ（壓縮檔），這支程式只讀得懂 KML 或 JSON`;
+    return;
+  }
+  if (!list) { LTN = []; LTN_ERR = `${ds}：回應格式無法辨識（開頭是「${esc(body.slice(0, 24))}」）`; return; }
+
+  LTN = list; LTN_AT = Date.now(); LTN_ERR = '';
+}
+
+/* 這一站周圍有幾次落雷。**雲對地與雲間分開算** ——
+   雲間閃電不會打到設備,把兩者加在一起會把數字灌水一倍以上
+   （官方那份樣本裡 124 筆中有 91 筆是雲間）。 */
+function strikesNear(st, km) {
+  const R = km || ltnRadius();
+  const out = { cg: 0, ic: 0, nearest: null, last: 0 };
+  if (!LTN.length || !st || !Number.isFinite(st.lat)) return out;
+  for (const s of LTN) {
+    const d = distKm({ lat: st.lat, lng: st.lng }, { lat: s.lat, lng: s.lng });
+    if (d > R) continue;
+    if (s.cg) out.cg++; else out.ic++;
+    if (!out.nearest || d < out.nearest.d) out.nearest = { d, t: s.t, cg: s.cg };
+    if (s.t > out.last) out.last = s.t;
+  }
+  return out;
+}
+const ltnRadius = () => {
+  const v = +DB.cfg.ltnKm;
+  return Number.isFinite(v) && v > 0 ? clamp(v, 1, 100) : 15;
+};
 
 const ADV_SETS = ['W-C0033-002', 'W-C0033-003', 'W-C0033-001'];
 
@@ -2394,17 +2546,20 @@ async function loadTyphoon(manual) {
   const obsP = key
     // fetchForecast 自己會寫 WX / WX_ERR,這裡不取它的回傳值;
     // 天氣預報抓不到絕對不能連帶讓颱風那條路徑掛掉,所以一律 allSettled。
-    ? Promise.allSettled([fetchObs(key), fetchRain(key), fetchAdvisory(key), fetchForecast(key)])
-        .then(([w, r, a, f]) => {
+    ? Promise.allSettled([fetchObs(key), fetchRain(key), fetchAdvisory(key),
+        fetchForecast(key), fetchLightning(key)])
+        .then(([w, r, a, f, l]) => {
           OBS = w.status === 'fulfilled' ? w.value : [];
           RAIN = r.status === 'fulfilled' ? r.value : [];
           ADV = a.status === 'fulfilled' ? a.value : [];
           if (f.status === 'rejected') { WX = null; WX_ERR = String((f.reason && f.reason.message) || f.reason || '天氣預報讀取失敗'); }
+          if (l.status === 'rejected') { LTN = []; LTN_ERR = String((l.reason && l.reason.message) || l.reason || '閃電資料讀取失敗'); }
           OBS_AT = RAIN_AT = Date.now();
         })
     : Promise.resolve().then(() => {
         OBS = []; RAIN = []; ADV = []; OBS_AT = RAIN_AT = 0;
         WX = null; WX_AT = 0; WX_ERR = '';
+        LTN = []; LTN_AT = 0; LTN_ERR = '';
       });
   try {
     let all = [];
@@ -3265,22 +3420,39 @@ function todayFocus() {
       'var(--fg2)');
   }
 
-  // ── 雷雨：打雷就要關站臺,所以它的分數只低於官方颱風警報 ──
+  /* ── 雷電：打雷就要關站臺,所以它的分數只低於官方颱風警報 ──
+     **實測的落雷排在特報前面** —— 特報說「這個縣市正在打雷」,
+     落雷點說「離這一站 4 公里處三分鐘前打了一次雲對地」。
+     值班要決定關不關機,問的是後者。 */
+  const R = ltnRadius();
+  const cgNear = sites.map(x => ({ x, s: strikesNear(x, R) })).filter(r => r.s.cg > 0)
+    .sort((a, b) => a.s.nearest.d - b.s.nearest.d);
+  const icNear = sites.map(x => ({ x, s: strikesNear(x, R) })).filter(r => r.s.cg === 0 && r.s.ic > 0);
   const tAdv = thunderAdv();
   const inZone = tAdv.length ? sites.filter(x => thunderFor(x)) : [];
-  if (inZone.length) {
-    add(95, '雷雨', 'wx', `${inZone.length} 站在雷雨特報範圍`,
+  if (cgNear.length) {
+    const n0 = cgNear[0];
+    add(98, '雷電', 'wx', `${cgNear.length} 站 ${R} km 內有雲對地落雷`,
+      `最近 ${esc(n0.x.name)} ${Math.round(n0.s.nearest.d)} km`
+      + (n0.s.last ? `　${fmtClock(n0.s.last)}` : '') + '　實測，依規定應關閉設備', 'var(--no)');
+  } else if (inZone.length) {
+    add(95, '雷電', 'wx', `${inZone.length} 站在雷雨特報範圍`,
       inZone.slice(0, 4).map(x => esc(x.name)).join('、')
       + (inZone.length > 4 ? ' 等' : '') + '　依規定應關閉設備', 'var(--no)');
+  } else if (icNear.length) {
+    add(72, '雷電', 'wx', `${icNear.length} 站 ${R} km 內有雲間閃電`,
+      '雲間閃電不會打到地面設備，但代表雷雨胞就在附近', 'var(--sb)');
   } else if (tAdv.length) {
-    add(70, '雷雨', 'wx', `${tAdv.map(a => esc(a.kind)).join('、')}發布中`,
+    add(70, '雷電', 'wx', `${tAdv.map(a => esc(a.kind)).join('、')}發布中`,
       '轄區內沒有站臺落在範圍內', 'var(--sb)');
   } else {
     const ahead = sites.map(x => ({ x, t: thunderAhead(x) })).filter(r => r.t);
     if (ahead.length) {
       const first = ahead.reduce((a, b) => a.t.from <= b.t.from ? a : b);
-      add(40, '雷雨', 'wx', `預報 ${ahead.length} 站有雷`,
+      add(40, '雷電', 'wx', `預報 ${ahead.length} 站有雷`,
         `最早 ${esc(first.x.name)} ${relDay(first.t.from)}${fmtClock(first.t.from)}　這是預報不是現在`, 'var(--sb)');
+    } else if (LTN_AT) {
+      add(6, '雷電', 'wx', `${R} km 內沒有落雷`, '過去 1 小時實測，也沒有雷雨特報', 'var(--ok)');
     }
   }
 
@@ -3369,16 +3541,20 @@ function glanceCard() {
     + (hot ? rest : F).map(row).join('');
 }
 
-/* ── 雷雨 ─────────────────────────────────────────────────
+/* ── 雷電 ─────────────────────────────────────────────────
    使用者的規則：**打雷就要關站臺**。所以雷不能跟雨混在一起講,
-   它要自己一段,而且要回答「**哪些站臺現在在雷區裡**」。
+   它要自己一段,而且要回答「**離我的站臺幾公里處剛剛打了一次**」。
 
-   **先講做不到的：真正的落雷即時位置，我拿不到。**
-   氣象署開放資料裡沒有免費的閃電定位資料集（那是加值服務）。
-   所以這裡的來源只有兩個,兩個都會標明是哪一種:
-   ① **官方大雷雨即時訊息／雷雨特報** —— 走的是本來就在抓的天氣特報資料集,
-      有發布才有,是官方對「哪個地區正在打雷」的判斷。
-   ② **鄉鎮預報裡的雷雨時段** —— 那是預報,不是現在正在打雷。         */
+   來源有三種,可信度與意義完全不同,畫面上一律分開標:
+   ① **落雷實測**（O-A0039-001,見上面 fetchLightning）—— 逐點的經緯度與時間,
+      是真的量到的。**雲對地才會打到地面設備**,與雲間分開算。
+   ② **官方雷雨特報** —— 區域性的判斷,講的是「這個縣市正在打雷」。
+   ③ **鄉鎮預報裡的雷雨時段** —— 那是預報,不是現在正在打雷。
+
+   註：上一版這裡寫著「真正的落雷即時位置拿不到」。那是**錯的** ——
+   使用者提供了官方檔案,O-A0039-001 確實存在。沒查證就說「沒有」,
+   跟沒查證就說「有」（W-C0034-003）是同一個毛病的反面,而且更難發現:
+   畫面上不會出錯,只會少一個本來做得到的功能。              */
 const thunderAdv = () => ADV.filter(a => a.cat === 'thunder');
 
 // 這個地點目前是否在官方雷雨特報的範圍內
@@ -3410,48 +3586,89 @@ function thunderAhead(site) {
 function thunderCard() {
   const adv = thunderAdv();
   const sites = DB.stations.filter(x => IS_LIVE(x) && Number.isFinite(x.lat));
+  const R = ltnRadius();
+
+  /* 每一站周圍的落雷。這是**實測**,優先於特報 ——
+     特報講的是「這個縣市正在打雷」,落雷點講的是「離這一站幾公里處剛剛打了一次」。
+     值班要決定關不關機,問的是後者。 */
+  const near = sites.map(x => ({ x, s: strikesNear(x, R) }))
+    .filter(r => r.s.cg + r.s.ic > 0)
+    .sort((a, b) => (b.s.cg - a.s.cg) || (a.s.nearest.d - b.s.nearest.d));
+  const cgHit = near.filter(r => r.s.cg > 0);
+
   const inZone = adv.length ? sites.map(x => ({ x, t: thunderFor(x) })).filter(r => r.t) : [];
   const ahead = sites.map(x => ({ x, t: thunderAhead(x) })).filter(r => r.t);
 
-  const head = `<div class="sec"><h2>雷雨</h2></div>`;
+  const head = `<div class="sec"><h2>雷電</h2></div>`;
+  const win = LTN_AT
+    ? `<div class="tybar" style="margin-bottom:0.5rem"><b>落雷實測</b>
+        ${LTN_WIN ? esc(LTN_WIN) : '過去 1 小時'}
+        <span class="mono" style="color:var(--fg4)">　全臺 ${LTN.length} 筆　半徑 ${R} km</span></div>`
+    : '';
+  const err = LTN_ERR
+    ? `<div class="msg e" style="margin-bottom:0.5rem">落雷資料取得失敗：${esc(LTN_ERR)}。
+       可在設定「閃電（落雷）」改資料集代號。下方仍會顯示官方雷雨特報與預報。</div>` : '';
 
-  if (!adv.length && !ahead.length) {
-    return head + `<div class="card pad" style="margin-bottom:0.75rem">
-      <b style="color:var(--ok);font-size:1.0625rem">目前沒有雷雨特報</b>
+  const nothing = !adv.length && !ahead.length && !near.length;
+  if (nothing) {
+    return head + err + `<div class="card pad" style="margin-bottom:0.75rem">${win}
+      <b style="color:var(--ok);font-size:1.0625rem">${
+        LTN_AT ? `半徑 ${R} km 內沒有落雷` : '目前沒有雷電資訊'}</b>
       <div class="hint" style="margin-top:0.375rem">
-        中央氣象署目前沒有發布大雷雨即時訊息或雷雨特報，鄉鎮預報的時段裡也沒有雷。
-        ${ADV.length ? '' : '（目前完全沒有取得任何特報資料，可能是還沒更新或授權碼未設定。）'}</div>
+        ${LTN_AT ? '過去 1 小時各站臺周圍都沒有偵測到落雷，' : ''}中央氣象署也沒有發布雷雨特報，
+        鄉鎮預報的時段裡也沒有雷。</div>
       ${thunderNote()}</div>`;
   }
 
   const rows = [];
+
+  // ① 落雷實測 —— 這一段排最前面,因為它是實測而且是逐點的
+  if (near.length) {
+    rows.push(`<div style="padding:0.5rem 0;border-bottom:1px solid var(--edge)">
+      <div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">
+        <b style="font-size:1.0625rem;color:${cgHit.length ? 'var(--no)' : 'var(--sb)'}">${
+          cgHit.length ? `${cgHit.length} 站 ${R} km 內有雲對地落雷`
+                       : `${near.length} 站 ${R} km 內有雲間閃電`}</b>
+        <span class="tag" style="background:${cgHit.length ? 'var(--no)' : 'var(--sb)'};color:#08131A">實測</span></div>
+      <div style="overflow-x:auto;margin-top:0.375rem"><table class="impact wx">
+        <colgroup><col><col style="width:3.6rem"><col style="width:3.6rem"><col style="width:5.4rem"></colgroup>
+        <tr><th>站臺</th><th>對地</th><th>雲間</th><th>最近一次</th></tr>
+        ${near.map(r => `<tr${r.s.cg ? ' style="background:var(--no-d)"' : ''}>
+          <td class="nm">${esc(r.x.name)}
+            <span class="mono" style="font-size:0.625rem;color:var(--fg4);font-weight:400">　${
+              S_LABEL[r.x.status] || r.x.status}</span></td>
+          <td class="mono" style="text-align:right;color:${r.s.cg ? 'var(--no)' : 'var(--fg4)'};font-weight:700">${r.s.cg}</td>
+          <td class="mono" style="text-align:right;color:var(--fg3)">${r.s.ic}</td>
+          <td class="mono" style="text-align:right">${Math.round(r.s.nearest.d)} km<br>
+            <span style="color:var(--fg4)">${r.s.last ? fmtClock(r.s.last) : '—'}</span></td>
+        </tr>`).join('')}</table></div>
+      <div class="hint" style="margin-top:0.375rem">
+        <b>「對地」才是打到地面的那一種</b>，對設備有直接威脅；雲間閃電不會打到設備，兩者分開算。
+        依單位規定，雷雨期間應關閉站臺設備——這裡只列出偵測到什麼，
+        <b>關機與否仍由值班判斷</b>。半徑可在設定調整。</div></div>`);
+  } else if (LTN_AT) {
+    rows.push(`<div style="padding:0.5rem 0;border-bottom:1px solid var(--edge)">
+      <span style="color:var(--ok)">落雷實測：各站臺 ${R} km 內過去 1 小時沒有偵測到落雷。</span></div>`);
+  }
+
+  // ② 官方雷雨特報
   if (adv.length) {
     rows.push(`<div style="padding:0.5rem 0;border-bottom:1px solid var(--edge)">
       <div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">
-        <b style="color:var(--no);font-size:1.0625rem">${adv.map(a => esc(a.kind)).join('、')}</b>
+        <b style="color:var(--no)">${adv.map(a => esc(a.kind)).join('、')}</b>
         <span class="tag" style="background:var(--no);color:#08131A">中央氣象署發布</span></div>
       ${adv.map(a => `<div style="font-size:0.8125rem;color:var(--fg2);margin-top:0.25rem">
         ${esc(a.kind)}：${a.areas.length ? esc(a.areas.join('、')) : '（未列地區）'}
         ${a.end ? `<span class="mono" style="color:var(--fg4)">　至 ${fmtShort(a.end)}</span>` : ''}
-        </div>`).join('')}</div>`);
+        </div>`).join('')}
+      ${inZone.length
+        ? `<div style="font-size:0.8125rem;margin-top:0.375rem"><b style="color:var(--no)">轄區內 ${
+            inZone.length} 站在範圍：</b>${inZone.map(r => esc(r.x.name)).join('、')}</div>`
+        : '<div style="font-size:0.8125rem;margin-top:0.375rem;color:var(--ok)">轄區內沒有站臺落在特報範圍內。</div>'}
+      </div>`);
   }
 
-  // 這一段才是值班真正要的：我的哪幾站在雷區裡
-  if (inZone.length) {
-    rows.push(`<div style="padding:0.5rem 0;border-bottom:1px solid var(--edge)">
-      <b style="color:var(--no)">轄區內 ${inZone.length} 站在雷雨特報範圍</b>
-      ${inZone.map(r => `<div style="font-size:0.8125rem;margin-top:0.25rem">
-        <b>${esc(r.x.name)}</b>
-        <span style="color:var(--fg3)">　${esc(r.t.area)}　${esc(r.t.kind)}</span>
-        <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">　目前 ${
-          S_LABEL[r.x.status] || r.x.status}</span></div>`).join('')}
-      <div class="hint" style="margin-top:0.375rem">
-        依單位規定，雷雨期間應關閉站臺設備。這裡只列出範圍，<b>關機與否仍由值班判斷</b>。</div></div>`);
-  } else if (adv.length) {
-    rows.push(`<div style="padding:0.5rem 0;border-bottom:1px solid var(--edge)">
-      <span style="color:var(--ok)">轄區內沒有站臺落在雷雨特報範圍內。</span></div>`);
-  }
-
+  // ③ 預報
   if (ahead.length) {
     rows.push(`<div style="padding:0.5rem 0">
       <b style="color:var(--sb)">預報有雷的站臺（${ahead.length}）</b>
@@ -3464,7 +3681,8 @@ function thunderCard() {
         <b>這是預報不是現在正在打雷</b>，時距 3 小時一格。</div></div>`);
   }
 
-  return head + `<div class="card pad" style="margin-bottom:0.75rem">${rows.join('')}${thunderNote()}</div>`;
+  return head + err + `<div class="card pad" style="margin-bottom:0.75rem">${win}${
+    rows.join('')}${thunderNote()}</div>`;
 }
 
 function thunderNote() {
@@ -3472,12 +3690,15 @@ function thunderNote() {
     <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
       這裡的雷是哪裡來的　·　點開</summary>
     <p class="hint" style="margin:0.375rem 0">
-      <b>真正的落雷即時位置，這支程式拿不到。</b>
-      氣象署開放資料裡沒有免費的閃電定位資料集，那是加值服務。所以這裡只有兩種來源：<br><br>
-      ① <b>官方大雷雨即時訊息／雷雨特報</b>——走本來就在抓的天氣特報資料集。有發布才有，
-      那是官方對「哪個地區正在打雷」的判斷，也是最接近「現在正在打雷」的東西。<br>
-      ② <b>鄉鎮預報裡有雷的時段</b>——那是<b>預報</b>，不是現在。<br><br>
-      要看即時的雷達回波與閃電，請用<b>實況頁</b>的圖層，或
+      三種來源，可信度與意義完全不同，畫面上一律分開標：<br><br>
+      ① <b>落雷實測</b>（<code>O-A0039-001</code> 過去 1 小時閃電偵測資料）——
+      逐點的經緯度與時間，是<b>真的量到的落雷</b>。分成<b>雲對地</b>與<b>雲間</b>：
+      只有雲對地會打到地面設備，兩者一定要分開算
+      （官方樣本裡 124 筆中有 91 筆是雲間，加在一起會把數字灌水一倍以上）。<br>
+      ② <b>官方雷雨特報</b>——區域性的判斷，講的是「這個縣市正在打雷」，
+      不是「離這一站幾公里」。<br>
+      ③ <b>鄉鎮預報裡有雷的時段</b>——那是<b>預報</b>，不是現在。<br><br>
+      要看即時的雷達回波，請用<b>實況頁</b>的圖層，或
       <a href="https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html" target="_blank" rel="noopener">氣象署雷達回波</a>。</p>
   </details>`;
 }
@@ -3915,6 +4136,37 @@ function briefText() {
     L.push('降雨特報分級（中央氣象署發布）');
     for (const a of ADV) {
       L.push(`${IN}${a.kind}：${a.areas.length ? a.areas.join('、') : '（未列地區）'}`);
+    }
+  }
+
+  /* ── 雷電 ──
+     打雷要關站臺,所以它自己一段,而且實測的落雷寫在特報前面。 */
+  {
+    const R = ltnRadius();
+    const sites2 = DB.stations.filter(x => IS_LIVE(x) && Number.isFinite(x.lat));
+    const near2 = sites2.map(x => ({ x, s: strikesNear(x, R) })).filter(r => r.s.cg + r.s.ic > 0)
+      .sort((a, b) => (b.s.cg - a.s.cg) || (a.s.nearest.d - b.s.nearest.d));
+    const tAdv2 = thunderAdv();
+    if (near2.length || tAdv2.length) {
+      L.push('');
+      L.push('雷電');
+      if (LTN_AT) {
+        const cg2 = near2.filter(r => r.s.cg > 0);
+        if (cg2.length) {
+          L.push(`${IN}落雷實測：${cg2.length} 站於半徑 ${R} 公里內偵測到雲對地落雷`
+            + `（${cg2.slice(0, 4).map(r => `${r.x.name} ${r.s.cg} 次、最近 ${Math.round(r.s.nearest.d)} 公里`).join('；')}`
+            + `${cg2.length > 4 ? `；等 ${cg2.length} 站` : ''}）。`);
+        } else if (near2.length) {
+          L.push(`${IN}落雷實測：半徑 ${R} 公里內僅偵測到雲間閃電，無雲對地落雷。`);
+        }
+      } else if (LTN_ERR) {
+        L.push(`${IN}落雷實測：取得失敗（${LTN_ERR}）。`);
+      }
+      for (const a of tAdv2) {
+        L.push(`${IN}${a.kind}：${a.areas.length ? a.areas.join('、') : '（未列地區）'}`
+          + `${a.end ? `，至 ${fmtShort(a.end)}` : ''}。`);
+      }
+      L.push(`${IN}※ 雲對地落雷才會打到地面設備；雲間閃電不會。關機與否依單位規定由值班判斷。`);
     }
   }
 
@@ -5318,6 +5570,24 @@ function renderSettings() {
     </div>
   </div>
 
+  <div class="sec"><h2>閃電（落雷）</h2></div>
+  <div class="card pad" style="margin-bottom:1.125rem">
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">資料集代號</span>
+      <input type="text" id="c_ltnSet" value="${esc(c.ltnSet === undefined ? LTN_DEFAULT : (c.ltnSet || ''))}"
+        placeholder="留空則不抓" autocomplete="off" spellcheck="false"></label>
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">計入半徑（公里）</span>
+      <input type="number" id="c_ltnKm" min="1" max="100" step="1" value="${ltnRadius()}">
+      <span class="sub">站臺周圍多少公里內的落雷要算進來。預設 15 公里。</span></label>
+    <span class="sub"><code>O-A0039-001</code> 是<b>過去 1 小時閃電偵測資料</b>，
+      一筆一個落雷點，有經緯度、時間，以及<b>雲對地／雲間</b>的分別。
+      <b>只有雲對地會打到地面設備</b>，程式分開計算——官方樣本裡 124 筆中有 91 筆是雲間，
+      加在一起會把數字灌水一倍以上。<br>
+      這支資料集官方是以 KML／KMZ 發布的，程式<b>JSON 與 KML 兩種都接</b>；
+      若拿到的是 KMZ（壓縮檔）會直接講出來——瀏覽器沒有函式庫解不開壓縮檔。
+      抓不到時雷電卡會寫明原因。</span>
+    <div class="btnrow"><button class="btn sm" onclick="loadTyphoon(true)">立即取得</button></div>
+  </div>
+
   <div class="sec"><h2>天氣預報來源</h2></div>
   <div class="card pad" style="margin-bottom:1.125rem">
     <label class="fld" style="margin-bottom:0.5rem"><span class="lb">逐 3 小時（未來 2 天）資料集代號</span>
@@ -5525,6 +5795,8 @@ function renderSettings() {
   bind('#c_dgpaProxy', e => { c.dgpaProxy = e.target.value.trim(); save(); fetchDgpa(true); });
   bind('#c_wx3h', e => { c.wx3h = e.target.value.trim(); save(); });
   bind('#c_wxWk', e => { c.wxWk = e.target.value.trim(); save(); });
+  bind('#c_ltnSet', e => { c.ltnSet = e.target.value.trim(); save(); });
+  bind('#c_ltnKm', e => { c.ltnKm = clamp(+e.target.value || 15, 1, 100); save(); renderTyphoon({}); });
   bind('#c_bfShut', e => { c.bfShut = +e.target.value; save(); refreshAll(); });
   bind('#c_bfEmerg', e => { c.bfEmerg = +e.target.value; save(); refreshAll(); });
   bind('#c_bfResume', e => { c.bfResume = +e.target.value; save(); refreshAll(); });
