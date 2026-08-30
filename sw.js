@@ -6,7 +6,7 @@
  * 氣象資料是唯一的例外 —— 過期的颱風資訊比沒有資訊更危險,
  * 所以 CWA / GDACS 的請求一律直接走網路,絕不快取。
  */
-const CACHE = 'galepost-v40';
+const CACHE = 'galepost-v41';
 const SHELL = [
   './',
   './index.html',
@@ -74,7 +74,11 @@ self.addEventListener('fetch', e => {
   // 颱風資料:網路優先,離線才退回快取。
   // 這份會隨颱風動態改變,拿快取優先會慢一輪;但離線時有舊的總比沒有好,
   // 畫面上另外會標明取得時間,不會讓人誤以為是即時的。
-  if (url.origin === location.origin && url.pathname.endsWith('/data/typhoon.json')) {
+  /* 落雷與颱風同一個規則:網路優先,離線才退回快取。
+     落雷拿到舊的很危險,但畫面上是用檔案裡的 updated 算資料年齡的,
+     所以就算讀到快取,「幾分鐘前」仍然是誠實的。 */
+  if (url.origin === location.origin
+      && (url.pathname.endsWith('/data/typhoon.json') || url.pathname.endsWith('/data/lightning.json'))) {
     e.respondWith(
       fetch(req)
         .then(res => {

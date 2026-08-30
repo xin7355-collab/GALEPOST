@@ -1,0 +1,59 @@
+# 落雷資料的後端管線。
+#
+# 為什麼要有這個：O-A0039-001 的端點沒有送 CORS 標頭，瀏覽器直連一定被擋
+# （實機訊息是 Load failed）。這不是網址寫錯或格式不對——瀏覽器就是不准讀。
+# 由後端抓好、放成同源的靜態檔，就沒有 CORS 這件事，使用者也不必自己架代理。
+#
+# 要啟用：到 repo → Settings → Secrets and variables → Actions
+# 新增 CWA_API_KEY。沒設的話這支照樣會跑，只是寫一個 hasKey:false 的空殼，
+# 前端會自動略過，不會在畫面上留一個永遠失敗的區塊。
+#
+# 時效說明：GitHub 的排程最短 5 分鐘，而且**實際觸發常常延遲 5～20 分鐘**
+# （尖峰時更久）。所以這份資料會比現場慢一截。落雷資料本身涵蓋的是
+# 「過去 1 小時」，慢十幾分鐘還在可用範圍，但前端一定會標出資料時間，
+# 不會假裝是即時的。
+name: Fetch lightning
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lightning
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/feng-shao-lgn3wn
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 只用標準函式庫（urllib / zipfile / xml），不裝任何套件
+      - name: Fetch
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+        run: python scripts/fetch_lightning.py
+
+      # 內容沒變就不要 commit —— 沒有雷的日子不該每十分鐘產生一次提交，
+      # 每一次提交都會觸發一輪 Pages 重新部署。
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- data/lightning.json; then
+            echo "no change"
+            exit 0
+          fi
+          git add data/lightning.json
+          git commit -m "落雷資料 $(date -u -d '+8 hours' '+%Y-%m-%d %H:%M')"
+          git push

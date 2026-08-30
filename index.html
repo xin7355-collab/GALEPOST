@@ -1209,7 +1209,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v40';
+const APP_VER = 'v41';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -2033,6 +2033,35 @@ async function fetchLightning(key) {
     }
   };
 
+  /* ── 先看同源的後端檔 ────────────────────────────────
+     `data/lightning.json` 是 GitHub Actions 每十分鐘抓好放上來的。
+     **同源就沒有 CORS 這件事** —— 不需要代理、不需要使用者做任何設定,
+     而氣象署那些端點在瀏覽器裡是連一個位元組都拿不到的。
+
+     代價是**時效**:排程最短五分鐘,而且實際觸發常常再延遲十幾分鐘。
+     所以只在「夠新」的時候直接採用；太舊就往下走,再去試live 的端點。 */
+  const backend = await (async () => {
+    try {
+      const r = await fetch('./data/lightning.json', { cache: 'no-store' });
+      if (!r.ok) { tried.push(`後端檔 HTTP ${r.status}`); return null; }
+      const j = await r.json();
+      if (!j || j.hasKey === false) { tried.push('後端檔：尚未設定 CWA_API_KEY'); return null; }
+      if (j.error) { tried.push(`後端檔：${String(j.error).slice(0, 120)}`); return null; }
+      const list = (j.strikes || []).map(x => ({
+        lat: x.lat, lng: x.lng, t: x.t ? wxTime(x.t) : 0, cg: !!x.cg,
+      })).filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lng));
+      const age = j.updated ? Date.now() - wxTime(j.updated) : Infinity;
+      return { list, win: j.win || j.window || '', age, src: j.source || '' };
+    } catch (e) { tried.push(`後端檔 ${(e && e.message) || e}`); return null; }
+  })();
+  // 30 分鐘內就直接用。再舊就先試 live,live 也不行時下面還會退回來。
+  if (backend && backend.age < 30 * 60000) {
+    LTN = backend.list; LTN_AT = Date.now(); LTN_ERR = ''; LTN_MANUAL = false;
+    LTN_WIN = backend.win;
+    LTN_SRC = `後端管線${backend.src ? '（' + backend.src + '）' : ''}`;
+    return;
+  }
+
   let buf = null;
   for (const c of ltnUrls(ds, key)) {
     buf = await grab(c.tag, () => fetch(c.url, { cache: 'no-store' }));
@@ -2056,6 +2085,14 @@ async function fetchLightning(key) {
   }
 
   if (!buf) {
+    /* live 也拿不到 —— 有一份舊的後端檔總比什麼都沒有好,
+       但一定要標出它有多舊,不能讓人以為是現在的。 */
+    if (backend && backend.list.length) {
+      LTN = backend.list; LTN_AT = Date.now(); LTN_ERR = ''; LTN_MANUAL = false;
+      LTN_WIN = backend.win;
+      LTN_SRC = `後端管線（${Math.round(backend.age / 60000)} 分鐘前）`;
+      return;
+    }
     LTN = []; LTN_SRC = '';
     LTN_ERR = `${ds}：${tried.length} 種方式都失敗 —— ${tried.join('；')}`;
     return;
@@ -3958,7 +3995,8 @@ function thunderCard() {
     ? `<div class="tybar" style="margin-bottom:0.5rem"><b>落雷實測</b>
         ${LTN_WIN ? esc(LTN_WIN) : '過去 1 小時'}
         <span class="mono" style="color:var(--fg4)">　全臺 ${LTN.length} 筆　半徑 ${R} km</span>
-        ${LTN_MANUAL ? '<span class="tag" style="background:var(--sb);color:#08131A">手動匯入</span>' : ''}
+        ${LTN_MANUAL ? '<span class="tag" style="background:var(--sb);color:#08131A">手動匯入</span>'
+          : LTN_SRC ? `<span class="mono" style="font-size:0.625rem;color:var(--fg4)">　${esc(LTN_SRC)}</span>` : ''}
        </div>`
       + (stale ? `<div class="msg w" style="margin-bottom:0.5rem">
           <b>這份落雷資料可能已過期</b>：最後一筆是 ${fmtShort(newest)}（${relative(newest)}）。
@@ -6041,9 +6079,18 @@ function renderSettings() {
         為什麼抓不到？怎麼一勞永逸　·　點開</summary>
       <div class="hint" style="margin-top:0.375rem">
         氣象署的檔案端點<b>沒有送 CORS 標頭</b>，瀏覽器直連一定被擋（訊息會是
-        <code>Load failed</code>）。「停班停課來源」那一支通用 Worker 是為了
-        <code>dgpa.gov.tw</code> 做的，對別的網域回 <code>500</code> 很合理。<br><br>
-        一勞永逸的做法是自己開一個 Cloudflare Worker（免費方案就夠），
+        <code>Load failed</code>）。這不是網址寫錯或格式不對——<b>瀏覽器就是不准讀</b>。
+        「停班停課來源」那一支通用 Worker 是為了 <code>dgpa.gov.tw</code> 做的，
+        對別的網域回 <code>500</code> 很合理。<br><br>
+        <b>最省事的做法（推薦）：用這個 repo 自己的後端管線。</b>
+        到 repo → Settings → Secrets and variables → Actions 新增
+        <code>CWA_API_KEY</code>，就這樣。之後 GitHub Actions 每 10 分鐘會把落雷資料
+        抓好放成 <code>data/lightning.json</code>，程式讀的是<b>同源</b>的檔案，
+        沒有 CORS、不用代理、不用你做任何設定。<br>
+        代價是<b>時效</b>：GitHub 的排程最短 5 分鐘，而且實際觸發常常再延遲
+        5～20 分鐘。所以這份資料會比現場慢一截——畫面上一定會標出資料時間，
+        不會假裝是即時的。<br><br>
+        <b>要更即時</b>就自己開一個 Cloudflare Worker（免費方案就夠），
         貼上這段，再把網址填到上面「落雷專用代理」：
         <pre style="white-space:pre-wrap;font-family:var(--mono);font-size:0.6875rem;
           background:var(--bg2);border:1px solid var(--edge);border-radius:var(--r2);
