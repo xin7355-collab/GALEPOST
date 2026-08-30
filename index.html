@@ -326,7 +326,21 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
 .seg.tysub button{flex:1 0 calc(25% - 1px)}
 
 /* 天氣地點下拉。旁邊要留位置給「重新定位」,所以不吃滿整行。 */
-.wxsel{flex:1 1 auto;min-width:0;padding-top:0.5rem;padding-bottom:0.5rem}
+/* 總表裡的站臺名稱可以按進去看細節。做成連結的樣子而不是按鈕 ——
+   一整欄的按鈕框會把表格擠爆。 */
+.lnk{background:none;color:var(--acc);font:inherit;font-weight:600;padding:0;text-align:left}
+.lnk:active{opacity:.6}
+
+/* 「現在最該注意的事」。只有真的有事才出現 —— 天天掛一張大卡,
+   有事的那一天就沒有人會多看它一眼。 */
+.focus{display:block;width:100%;text-align:left;background:var(--surf);
+  border:1px solid var(--edge);border-left-width:3px;border-radius:var(--r2);
+  padding:0.6875rem 0.75rem;margin-bottom:0.5rem}
+.focus:active{background:var(--bg2)}
+.focus .fc-k{display:block;font-family:var(--mono);font-size:0.6875rem;
+  letter-spacing:0.08em;margin-bottom:0.1875rem}
+.focus .fc-v{display:block;font-size:1.125rem;font-weight:700;line-height:1.35}
+.focus .fc-s{display:block;font-size:0.8125rem;color:var(--fg3);margin-top:0.1875rem}
 
 /* 概況頁的三行摘要。每一行是一顆按鈕,按下去跳到那一頁 ——
    分頁多了之後,「警報怎麼樣了」不該還要自己去猜按哪一格。 */
@@ -1122,7 +1136,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v35';
+const APP_VER = 'v36';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1423,8 +1437,15 @@ async function fetchObs(key) {
    一樣認不出來就空著,不硬湊。                                      */
 let ADV = [], _advDiag = '';
 
-// 只留跟雨有關的特報,風的部分已經有颱風警報單在管了。
+/* 留下來的特報分兩類。風的部分已經有颱風警報單在管,低溫高溫與站臺無關。
+
+   **雷雨是獨立的一類,不是雨的一種。** 使用者的規則是「打雷就要關站臺」——
+   那跟「24 小時累積幾毫米」是完全不同的判斷:雷擊是瞬間的、對設備是直接風險,
+   而且來得快去得也快。原本的過濾式 /(大雨|豪雨|豪大雨)/ 會把「大雷雨即時訊息」
+   整個丟掉 —— 最該看到的那一種反而看不到。                       */
 const RAIN_PHENOM = /(大雨|豪雨|豪大雨)/;
+const THUNDER_PHENOM = /(雷|閃電)/;
+const advCat = k => THUNDER_PHENOM.test(k) ? 'thunder' : RAIN_PHENOM.test(k) ? 'rain' : '';
 
 /* 天氣特報的結構在不同資料集之間不一致,照著某個固定形狀解析很容易整份落空。
    改成遞迴走訪:沿途記住最近看到的 locationName 與 endTime,
@@ -1648,19 +1669,21 @@ async function fetchAdvisory(key) {
 
     const raw = [];
     walkAdvisory(j.records || j, '', 0, raw);
-    const rain = raw
-      .filter(a => RAIN_PHENOM.test(a.kind))     // 風有颱風警報單在管,低溫高溫與站臺無關
+    const keep = raw
+      .map(a => Object.assign({}, a, { cat: advCat(a.kind) }))
+      .filter(a => a.cat)                        // 只留雨與雷這兩類
       .filter(a => !a.end || a.end > now);       // 過期的擺著會讓人以為還在生效
-    if (!rain.length) continue;
+    if (!keep.length) continue;
 
     const byKind = new Map();                    // 同一種特報合併地區,不要一縣市一張卡
-    for (const a of rain) {
-      const cur = byKind.get(a.kind) || { kind: a.kind, areas: [], end: 0 };
+    for (const a of keep) {
+      const cur = byKind.get(a.kind) || { kind: a.kind, cat: a.cat, areas: [], end: 0 };
       for (const x of a.areas) if (!cur.areas.includes(x)) cur.areas.push(x);
       cur.end = Math.max(cur.end, a.end || 0);
       byKind.set(a.kind, cur);
     }
-    const order = ['超大豪雨', '大豪雨', '豪雨', '大雨'];
+    /* 雷排在雨前面 —— 對站臺來說雷是立即要動作的,雨是要盯著的。 */
+    const order = ['大雷雨', '雷雨', '閃電', '超大豪雨', '大豪雨', '豪雨', '大雨'];
     _advDiag = '';
     return [...byKind.values()].sort((x, y) => {
       const a = order.findIndex(o => x.kind.includes(o));
@@ -2898,7 +2921,7 @@ function renderTyphoon(o) {
   /* 警報與天氣各自獨立成頁 —— 兩者都是「一整頁的內容」,
      疊在概況底下要捲很久才看得到,而值班時這兩件事是分開問的:
      「氣象署發警報了沒」跟「外面現在有沒有在下雨」。 */
-  $('#tyWx').innerHTML = wxCard();
+  $('#tyWx').innerHTML = thunderCard() + wxCard();
   $('#tyWarnEst').innerHTML = warningCard();
   body.innerHTML = `<div class="card ty-hero">
     <div class="glow" style="background:${bfColor(bfV)}"></div>
@@ -3058,22 +3081,31 @@ let GEO = null, GEO_ERR = '', GEO_BUSY = false;
 const wxSites = () => sortForList(
   DB.stations.filter(x => IS_LIVE(x) && Number.isFinite(x.lat) && Number.isFinite(x.lng)));
 
+/* 目前正在細看的那一個地點。「全部站臺」模式沒有單一地點,回傳 null ——
+   讓呼叫端自己決定要怎麼辦,而不是偷偷挑一站當成使用者選的。 */
 function wxSite() {
   const pick = DB.cfg.wxLoc || '';
+  if (!pick) return null;                       // 全部站臺
   if (pick === WXLOC_GEO) {
     return GEO
       ? { id: WXLOC_GEO, name: '現在位置', lat: GEO.lat, lng: GEO.lng, geo: true, at: GEO.at }
       : { id: WXLOC_GEO, name: '現在位置', lat: NaN, lng: NaN, geo: true, pending: true };
   }
-  const list = wxSites();
-  if (pick) {
-    const hit = list.find(x => x.id === pick);
-    if (hit) return hit;
-    /* 選過的站臺被刪掉或被改成未建置了。不要靜靜換一站當成沒事 ——
-       畫面上會是別的地方的天氣,而使用者以為還是原本那個。 */
-    return { id: pick, name: '（已選的站臺不存在）', lat: NaN, lng: NaN, gone: true };
-  }
-  return list[0] || null;
+  const hit = wxSites().find(x => x.id === pick);
+  if (hit) return hit;
+  /* 選過的站臺被刪掉或被改成未建置了。不要靜靜換一站當成沒事 ——
+     畫面上會是別的地方的天氣,而使用者以為還是原本那個。 */
+  return { id: pick, name: '（已選的站臺不存在）', lat: NaN, lng: NaN, gone: true };
+}
+
+/* 播報稿與概況摘要一定要有一個地點才寫得出一句話。全部站臺模式時
+   用清單第一站（由北至南的最北那一站）,但**回傳時標明 fallback**,
+   呼叫端才有辦法在文字裡講清楚那是代表點,不是使用者指定的。 */
+function wxPrimary() {
+  const one = wxSite();
+  if (one && !one.gone) return one;
+  const first = wxSites()[0];
+  return first ? Object.assign({}, first, { fallback: true }) : null;
 }
 
 function locateMe() {
@@ -3104,27 +3136,80 @@ function setWxLoc(v) {
   DB.cfg.wxLoc = v; save(); renderTyphoon({});
 }
 
-/* 地點下拉。第一個是「現在位置」,之後是站臺,照清單排序。 */
+/* ── 地點選擇 ────────────────────────────────────────────
+   上一版做成一個 <select>,使用者的回饋是「還是沒有看到可以選擇地點的功能」,
+   而且「目前站臺位置是誰也不明顯」—— 那顆下拉混在卡片裡,看起來像裝飾。
+
+   重做成兩層,而且把「現在在看哪裡」講得很大聲:
+   ① 一排**分頁鈕**：全部站臺 / 現在位置 /（有站臺時）指定站臺
+   ② 選了「指定站臺」才出現站臺清單,照設定的清單排序（預設由北至南）
+   ③ 不管選哪一種,下面一定有一行**大字寫出現在看的是哪裡**
+
+   預設是**全部站臺**。使用者問「裡面還有全部站臺會不會錯亂」——
+   會,如果只給單站又不講清楚是哪一站。解法不是把其他站藏起來,
+   而是**先給一張全部站臺的總表**,要看細節再點進單站。      */
+const WXMODE_ALL = '', WXMODE_GEO = '__geo__';
+const wxMode = () => {
+  const v = DB.cfg.wxLoc || '';
+  if (v === WXMODE_GEO) return 'geo';
+  return v ? 'one' : 'all';
+};
+
 function wxPicker() {
-  const cur = DB.cfg.wxLoc || '';
+  const mode = wxMode();
   const list = wxSites();
-  const opt = (v, label, sel) =>
-    `<option value="${esc(v)}"${sel ? ' selected' : ''}>${esc(label)}</option>`;
-  const geoLabel = GEO ? `現在位置（±${GEO.acc} m）` : '現在位置（按下取得）';
-  return `<div style="display:flex;align-items:center;gap:0.375rem;margin-bottom:0.5rem">
-    <select id="wxLoc" class="wxsel" aria-label="天氣地點"
-      onchange="setWxLoc(this.value)">
-      ${opt(WXLOC_GEO, geoLabel, cur === WXLOC_GEO)}
-      ${list.length ? '<optgroup label="站臺">' + list.map(x =>
-        opt(x.id, x.name, cur ? cur === x.id : x === list[0])).join('') + '</optgroup>' : ''}
-    </select>
-    ${cur === WXLOC_GEO
-      ? `<button class="act" onclick="locateMe()"${GEO_BUSY ? ' disabled' : ''}>${
-          GEO_BUSY ? '定位中…' : '重新定位'}</button>` : ''}</div>`
-  + (GEO_ERR ? `<div class="msg e" style="margin:0 0 0.5rem">${esc(GEO_ERR)}</div>` : '')
-  + (!list.length && cur !== WXLOC_GEO
-      ? '<div class="msg i" style="margin:0 0 0.5rem">還沒有任何有座標的站臺。'
-        + '可以先用「現在位置」，或到站臺頁替站臺補上經緯度。</div>' : '');
+  const cur = DB.cfg.wxLoc || '';
+  const seg = [
+    ['all', WXMODE_ALL, `全部站臺${list.length ? `（${list.length}）` : ''}`],
+    ['geo', WXMODE_GEO, '現在位置'],
+  ];
+  if (list.length) seg.push(['one', '', '指定站臺']);
+
+  const segHtml = `<div class="seg" style="margin-bottom:0.5rem">${seg.map(([m, v, label]) =>
+    `<button type="button" aria-pressed="${mode === m}" onclick="setWxMode('${m}')">${label}</button>`
+  ).join('')}</div>`;
+
+  const chips = (mode === 'one' && list.length)
+    ? `<div class="chips" style="margin-bottom:0.5rem">${list.map(x =>
+        `<button type="button" class="chip" aria-pressed="${cur === x.id}"
+          onclick="setWxLoc('${esc(x.id)}')">${esc(x.name)}</button>`).join('')}</div>`
+    : '';
+
+  const geoBtn = mode === 'geo'
+    ? `<div class="btnrow" style="margin-bottom:0.5rem">
+        <button class="btn sm" onclick="locateMe()"${GEO_BUSY ? ' disabled' : ''}>${
+          GEO_BUSY ? '定位中…' : GEO ? '重新定位' : '取得目前位置'}</button>
+        ${GEO ? `<span class="mono" style="align-self:center;font-size:0.6875rem;color:var(--fg4)">
+          誤差 ±${GEO.acc} m　${fmtShort(GEO.at)}</span>` : ''}</div>`
+    : '';
+
+  return segHtml + chips + geoBtn
+    + (GEO_ERR && mode === 'geo' ? `<div class="msg e" style="margin:0 0 0.5rem">${esc(GEO_ERR)}</div>` : '')
+    + (!list.length && mode !== 'geo'
+        ? '<div class="msg i" style="margin:0 0 0.5rem">還沒有任何有座標的站臺。'
+          + '可以先用「現在位置」，或到站臺頁替站臺補上經緯度。</div>' : '');
+}
+
+/* 現在看的是哪裡 —— 大字,而且一定出現。以前只在卡片標題旁邊寫一小行,
+   使用者的原話是「目前站臺位置是誰也不明顯」。 */
+function wxWhere(site, sub) {
+  return `<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;
+    padding:0.5rem 0.75rem;background:var(--surf);border:1px solid var(--edge);
+    border-radius:var(--r2);margin-bottom:0.5rem">
+    <span class="mono" style="font-size:0.6875rem;color:var(--fg4);letter-spacing:0.06em">地點</span>
+    <b style="font-size:1.0625rem;color:var(--acc)">${esc(site.name)}</b>
+    ${sub ? `<span class="mono" style="font-size:0.6875rem;color:var(--fg4)">${sub}</span>` : ''}</div>`;
+}
+
+function setWxMode(m) {
+  if (m === 'all') { DB.cfg.wxLoc = WXMODE_ALL; save(); renderTyphoon({}); return; }
+  if (m === 'geo') { setWxLoc(WXMODE_GEO); return; }
+  // 「指定站臺」：還沒選過就先選清單第一個（由北至南的最北那一站）
+  const list = wxSites();
+  if (!list.length) return;
+  const cur = DB.cfg.wxLoc || '';
+  if (!cur || cur === WXMODE_GEO || !list.some(x => x.id === cur)) DB.cfg.wxLoc = list[0].id;
+  save(); renderTyphoon({});
 }
 
 function nowRain(st) {
@@ -3136,99 +3221,356 @@ function nowRain(st) {
   return { raining, m10, h1, h24: o.h24, name: o.name, km: Math.round(rb.km) };
 }
 
-/* ── 概況頁的摘要 ─────────────────────────────────────────
-   警報、天氣、停班停課各自搬進自己的分頁之後,概況頁只剩一張颱風卡。
-   這三行是「現在這三件事各自怎麼樣」的一句話版本,按下去就跳過去。
-   數字與判斷都直接取自那三頁自己的資料,不另外算一套 ——
-   兩套算法遲早會不一致,而不一致的那一刻沒有人會發現。        */
-function glanceCard() {
-  const row = (key, tab, val, sub, col) =>
-    `<button type="button" class="glance" onclick="goTySub('${tab}')">
-       <span class="gl-k">${key}</span>
-       <span class="gl-b"><span class="gl-v"${col ? ` style="color:${col}"` : ''}>${val}</span>
-         ${sub ? `<span class="gl-s">${sub}</span>` : ''}</span>
-       <span class="gl-a">›</span></button>`;
+/* ── 今日重點 ─────────────────────────────────────────────
+   使用者的原話：**「像今天風哨重點應該是雷雨，其它暫時不是重點，
+   應該要靈活變動」**。
 
-  const out = [];
+   固定順序的摘要在颱風天是對的,在今天就是錯的:一顆四千公里外的
+   輕颱排在第一行,而真正要動作的雷雨排在第三行。所以摘要不排死,
+   **依現在實際的威脅程度重排**,最該注意的那一件放最上面、放大。
 
-  // 警報：官方發布的是事實,本機推估只是排程參考,兩者不能講成同一句話
+   分數的來源全部是既有資料,不另外算一套模型 ——
+   兩套算法遲早會不一致,而不一致的那一刻沒有人會發現。         */
+function todayFocus() {
+  const F = [];
+  const add = (rank, key, tab, val, sub, col) => F.push({ rank, key, tab, val, sub, col });
+
+  const sites = DB.stations.filter(x => IS_LIVE(x) && Number.isFinite(x.lat));
+
+  // ── 警報 ──
   const w = DB.ty.warning;
   if (w && w.active) {
     const n = (w.areas || []).length;
-    out.push(row('警報', 'warn', esc(w.headline || '颱風警報'),
-      `中央氣象署發布${n ? `　影響 ${n} 個縣市` : ''}`, 'var(--no)'));
-  } else if (WARN && WARN.isTy) {
+    add(w.isLand ? 100 : 90, '警報', 'warn', esc(w.headline || '颱風警報'),
+      `中央氣象署發布${n ? `　影響 ${n} 個縣市` : ''}`, 'var(--no)');
+  } else if (WARN && WARN.isTy && (WARN.sea || WARN.land)) {
     const p = WARN.land || WARN.sea;
-    if (!WARN.sea && !WARN.land) {
-      out.push(row('警報', 'warn', '推估不會發布', '暴風範圍預估不會觸及臺灣近海', 'var(--ok)'));
-    } else if (p && p.phase === 'pending') {
-      const which = WARN.sea ? '海上' : '陸上';
-      out.push(row('警報', 'warn', `推估 ${fmtWhen(WARN.sea ? WARN.sea.issue : WARN.land.issue)} 發布${which}警報`,
-        '本機推估，非官方發布時間', 'var(--sb)'));
+    if (p && p.phase === 'pending') {
+      const which = WARN.land ? '陸上' : '海上';
+      add(60, '警報', 'warn',
+        `推估 ${fmtWhen((WARN.land || WARN.sea).issue)} 發布${which}警報`,
+        '本機推估，非官方發布時間', 'var(--sb)');
     } else {
-      out.push(row('警報', 'warn', '尚未發布警報', '本機已推算發布時機，點開看', 'var(--sb)'));
+      add(55, '警報', 'warn', '尚未發布警報', '本機已推算發布時機，點開看', 'var(--sb)');
     }
   } else {
-    out.push(row('警報', 'warn', '目前無颱風警報',
-      WARN ? '點開看推估的發布時機' : '尚未取得官方預報路徑', 'var(--fg2)'));
+    /* 沒有威脅的時候要沉下去,而且要講出**為什麼**沒事 ——
+       「目前無颱風警報」配上一顆四千公里外的颱風,講的是同一件事。 */
+    const km = WARN && WARN.cpa ? Math.round(WARN.cpa.d) : null;
+    add(5, '警報', 'warn', '目前無颱風警報',
+      km != null
+        ? (km > CPA_MID ? `路徑最近時距臺約 ${km} 公里，距離很遠、無影響`
+                        : `路徑最近時距臺約 ${km} 公里`)
+        : (WARN ? '暴風範圍預估不會觸及臺灣近海' : '尚未取得官方預報路徑'),
+      'var(--fg2)');
   }
 
-  // 天氣：實測在前（現在下不下雨是事實）,預報在後
-  const st0 = wxSite();
-  const st = (st0 && Number.isFinite(st0.lat)) ? st0 : null;
-  const rn = st ? nowRain(st) : null;
-  const tf = st ? townFor(st) : null;
-  let wxSub = '';
-  if (tf) {
-    const ser = townSeries(tf.town).filter(x => x.to > Date.now());
-    const wet = ser.find(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
-    wxSub = wet
-      ? `預報 ${relDay(wet.from)}${fmtClock(wet.from)} 起有雨`
-      : '未來預報時段內無明顯降雨';
+  // ── 雷雨：打雷就要關站臺,所以它的分數只低於官方颱風警報 ──
+  const tAdv = thunderAdv();
+  const inZone = tAdv.length ? sites.filter(x => thunderFor(x)) : [];
+  if (inZone.length) {
+    add(95, '雷雨', 'wx', `${inZone.length} 站在雷雨特報範圍`,
+      inZone.slice(0, 4).map(x => esc(x.name)).join('、')
+      + (inZone.length > 4 ? ' 等' : '') + '　依規定應關閉設備', 'var(--no)');
+  } else if (tAdv.length) {
+    add(70, '雷雨', 'wx', `${tAdv.map(a => esc(a.kind)).join('、')}發布中`,
+      '轄區內沒有站臺落在範圍內', 'var(--sb)');
   } else {
-    wxSub = WX_ERR ? '預報取得失敗，點開看原因' : '尚未取得鄉鎮天氣預報';
+    const ahead = sites.map(x => ({ x, t: thunderAhead(x) })).filter(r => r.t);
+    if (ahead.length) {
+      const first = ahead.reduce((a, b) => a.t.from <= b.t.from ? a : b);
+      add(40, '雷雨', 'wx', `預報 ${ahead.length} 站有雷`,
+        `最早 ${esc(first.x.name)} ${relDay(first.t.from)}${fmtClock(first.t.from)}　這是預報不是現在`, 'var(--sb)');
+    }
   }
-  // 摘要要寫出是哪裡的天氣 —— 現在地點可以選了,不講的話會看錯地方
-  out.push(row('天氣', 'wx',
-    st ? (rn ? (rn.raining ? '正在下雨' : '目前沒有下雨') : '無雨量站可判斷')
-       : (st0 && st0.pending ? '尚未取得目前位置' : '尚未選定地點'),
-    st ? `${esc(st.name)}　${wxSub}` : '點開選一個地點',
-    rn && rn.raining ? 'var(--acc)' : 'var(--fg2)'));
 
-  // 停班停課：官方公告優先,沒有公告才講推估
+  // ── 停班停課 ──
   const offHit = (DGPA_LIVE || []).filter(r => r.alert);
   if (offHit.length) {
-    out.push(row('停班課', 'dgpa', `官方 ${offHit.length} 個縣市停止上班上課`,
-      offHit.slice(0, 4).map(r => esc(r.county)).join('、')
-      + (offHit.length > 4 ? ' 等' : ''), 'var(--no)'));
+    add(85, '停班課', 'dgpa', `官方 ${offHit.length} 個縣市停止上班上課`,
+      offHit.slice(0, 4).map(r => esc(r.county)).join('、') + (offHit.length > 4 ? ' 等' : ''), 'var(--no)');
   } else if (DGPA_NONE) {
-    out.push(row('停班課', 'dgpa', '官方：無停班停課訊息', '人事行政總處公告', 'var(--ok)'));
+    add(4, '停班課', 'dgpa', '官方：無停班停課訊息', '人事行政總處公告', 'var(--ok)');
   } else {
     const estHit = COUNTIES_NS.filter(n => { const e = countyEstimate(n); return e && e.any; });
-    out.push(row('停班課', 'dgpa',
+    add(estHit.length ? 50 : 3, '停班課', 'dgpa',
       estHit.length ? `推估 ${estHit.length} 個縣市達基準` : '推估均未達基準',
       DGPA_LIVE_ERR ? '官方公告取得失敗，點開看原因' : '推估不是公告，一律以官方為準',
-      estHit.length ? 'var(--sb)' : 'var(--fg2)'));
+      estHit.length ? 'var(--sb)' : 'var(--fg2)');
   }
 
-  return out.join('');
+  // ── 站臺已達關機門檻（推估）──
+  if (SERIES && sites.length) {
+    const hit = sites.map(x => ({ x, i: stationImpact(SERIES, x, DB.cfg) }))
+      .filter(r => r.i && r.i.deadline);
+    if (hit.length) {
+      add(80, '站臺', 'st', `${hit.length} 站推估將達關機風級`,
+        `門檻 ${DB.cfg.bfShut} 級　點開看各站時間`, 'var(--no)');
+    }
+  }
+
+  // ── 天氣（實測在前）──
+  const st0 = wxPrimary();
+  const st = (st0 && Number.isFinite(st0.lat)) ? st0 : null;
+  const raining = sites.filter(x => { const r = nowRain(x); return r && r.raining; });
+  if (raining.length) {
+    add(45, '天氣', 'wx', `${raining.length} 站正在下雨`,
+      raining.slice(0, 4).map(x => esc(x.name)).join('、')
+      + (raining.length > 4 ? ' 等' : '') + '　雨量站實測', 'var(--acc)');
+  } else {
+    const rn = st ? nowRain(st) : null;
+    const tf = st ? townFor(st) : null;
+    let sub;
+    if (tf) {
+      const ser = townSeries(tf.town).filter(x => x.to > Date.now());
+      const wet = ser.find(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
+      sub = wet ? `預報 ${relDay(wet.from)}${fmtClock(wet.from)} 起有雨` : '未來預報時段內無明顯降雨';
+    } else sub = WX_ERR ? '預報取得失敗，點開看原因' : '尚未取得鄉鎮天氣預報';
+    add(tf && /起有雨/.test(sub) ? 20 : 2, '天氣', 'wx',
+      st ? (rn ? '目前沒有下雨' : '無雨量站可判斷')
+         : (st0 && st0.pending ? '尚未取得目前位置' : '尚未選定地點'),
+      st ? `${esc(st.name)}${st.fallback ? '（代表點）' : ''}　${sub}` : '點開選一個地點',
+      'var(--fg2)');
+  }
+
+  return F.sort((a, b) => b.rank - a.rank);
+}
+
+/* ── 概況頁的摘要 ─────────────────────────────────────────
+   最上面一張「現在最該注意的事」,下面是其餘各項,一律照威脅程度排。
+   按下去跳到那一頁。數字全部取自各頁自己的資料。            */
+function glanceCard() {
+  const F = todayFocus();
+  if (!F.length) return '';
+  const top = F[0], rest = F.slice(1);
+
+  /* 分數低於 30 就代表「今天沒有什麼特別要注意的」——
+     那時候不該端出一張大卡假裝有事。 */
+  const hot = top.rank >= 30;
+
+  const banner = hot
+    ? `<button type="button" class="focus" onclick="goTySub('${top.tab}')"
+        style="border-color:${top.col}">
+        <span class="fc-k" style="color:${top.col}">現在最該注意　${top.key}</span>
+        <span class="fc-v" style="color:${top.col}">${top.val}</span>
+        <span class="fc-s">${top.sub}</span></button>`
+    : '';
+
+  const row = f =>
+    `<button type="button" class="glance" onclick="goTySub('${f.tab}')">
+       <span class="gl-k">${f.key}</span>
+       <span class="gl-b"><span class="gl-v"${f.col ? ` style="color:${f.col}"` : ''}>${f.val}</span>
+         ${f.sub ? `<span class="gl-s">${f.sub}</span>` : ''}</span>
+       <span class="gl-a">›</span></button>`;
+
+  return banner
+    + (hot ? '' : `<div class="mono" style="font-size:0.6875rem;color:var(--fg4);
+        margin:0.25rem 0 0.375rem;letter-spacing:0.06em">目前沒有需要立即處置的項目</div>`)
+    + (hot ? rest : F).map(row).join('');
+}
+
+/* ── 雷雨 ─────────────────────────────────────────────────
+   使用者的規則：**打雷就要關站臺**。所以雷不能跟雨混在一起講,
+   它要自己一段,而且要回答「**哪些站臺現在在雷區裡**」。
+
+   **先講做不到的：真正的落雷即時位置，我拿不到。**
+   氣象署開放資料裡沒有免費的閃電定位資料集（那是加值服務）。
+   所以這裡的來源只有兩個,兩個都會標明是哪一種:
+   ① **官方大雷雨即時訊息／雷雨特報** —— 走的是本來就在抓的天氣特報資料集,
+      有發布才有,是官方對「哪個地區正在打雷」的判斷。
+   ② **鄉鎮預報裡的雷雨時段** —— 那是預報,不是現在正在打雷。         */
+const thunderAdv = () => ADV.filter(a => a.cat === 'thunder');
+
+// 這個地點目前是否在官方雷雨特報的範圍內
+function thunderFor(st) {
+  const c = cnorm(countyOf(st));
+  if (!c) return null;
+  for (const a of thunderAdv()) {
+    for (const area of a.areas) {
+      const an = cnorm(area);
+      const bare = an.replace(/(山區|平地|沿海|地區|北部|南部|東部|西部)+$/, '');
+      if (an.includes(c) || bare.includes(c) || c.includes(bare)) {
+        return { kind: a.kind, area, end: a.end };
+      }
+    }
+  }
+  return null;
+}
+
+// 預報時段裡的雷（不是現在正在打雷,是等一下可能會）
+const isThunder = w => /雷/.test(String(w || ''));
+function thunderAhead(site) {
+  const tf = site && Number.isFinite(site.lat) ? townFor(site) : null;
+  if (!tf) return null;
+  const ser = townSeries(tf.town).filter(x => x.to > Date.now());
+  const hit = ser.find(x => isThunder(x.wx));
+  return hit ? { from: hit.from, to: hit.to, wx: hit.wx, town: tf.town.name } : null;
+}
+
+function thunderCard() {
+  const adv = thunderAdv();
+  const sites = DB.stations.filter(x => IS_LIVE(x) && Number.isFinite(x.lat));
+  const inZone = adv.length ? sites.map(x => ({ x, t: thunderFor(x) })).filter(r => r.t) : [];
+  const ahead = sites.map(x => ({ x, t: thunderAhead(x) })).filter(r => r.t);
+
+  const head = `<div class="sec"><h2>雷雨</h2></div>`;
+
+  if (!adv.length && !ahead.length) {
+    return head + `<div class="card pad" style="margin-bottom:0.75rem">
+      <b style="color:var(--ok);font-size:1.0625rem">目前沒有雷雨特報</b>
+      <div class="hint" style="margin-top:0.375rem">
+        中央氣象署目前沒有發布大雷雨即時訊息或雷雨特報，鄉鎮預報的時段裡也沒有雷。
+        ${ADV.length ? '' : '（目前完全沒有取得任何特報資料，可能是還沒更新或授權碼未設定。）'}</div>
+      ${thunderNote()}</div>`;
+  }
+
+  const rows = [];
+  if (adv.length) {
+    rows.push(`<div style="padding:0.5rem 0;border-bottom:1px solid var(--edge)">
+      <div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">
+        <b style="color:var(--no);font-size:1.0625rem">${adv.map(a => esc(a.kind)).join('、')}</b>
+        <span class="tag" style="background:var(--no);color:#08131A">中央氣象署發布</span></div>
+      ${adv.map(a => `<div style="font-size:0.8125rem;color:var(--fg2);margin-top:0.25rem">
+        ${esc(a.kind)}：${a.areas.length ? esc(a.areas.join('、')) : '（未列地區）'}
+        ${a.end ? `<span class="mono" style="color:var(--fg4)">　至 ${fmtShort(a.end)}</span>` : ''}
+        </div>`).join('')}</div>`);
+  }
+
+  // 這一段才是值班真正要的：我的哪幾站在雷區裡
+  if (inZone.length) {
+    rows.push(`<div style="padding:0.5rem 0;border-bottom:1px solid var(--edge)">
+      <b style="color:var(--no)">轄區內 ${inZone.length} 站在雷雨特報範圍</b>
+      ${inZone.map(r => `<div style="font-size:0.8125rem;margin-top:0.25rem">
+        <b>${esc(r.x.name)}</b>
+        <span style="color:var(--fg3)">　${esc(r.t.area)}　${esc(r.t.kind)}</span>
+        <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">　目前 ${
+          S_LABEL[r.x.status] || r.x.status}</span></div>`).join('')}
+      <div class="hint" style="margin-top:0.375rem">
+        依單位規定，雷雨期間應關閉站臺設備。這裡只列出範圍，<b>關機與否仍由值班判斷</b>。</div></div>`);
+  } else if (adv.length) {
+    rows.push(`<div style="padding:0.5rem 0;border-bottom:1px solid var(--edge)">
+      <span style="color:var(--ok)">轄區內沒有站臺落在雷雨特報範圍內。</span></div>`);
+  }
+
+  if (ahead.length) {
+    rows.push(`<div style="padding:0.5rem 0">
+      <b style="color:var(--sb)">預報有雷的站臺（${ahead.length}）</b>
+      ${ahead.slice(0, 8).map(r => `<div style="font-size:0.8125rem;margin-top:0.25rem">
+        <b>${esc(r.x.name)}</b>
+        <span style="color:var(--fg3)">　${relDay(r.t.from)}${fmtClock(r.t.from)}–${fmtClock(r.t.to)}　${
+          esc(r.t.wx)}</span></div>`).join('')}
+      ${ahead.length > 8 ? `<div style="color:var(--fg4);font-size:0.75rem">…等 ${ahead.length} 站</div>` : ''}
+      <div class="hint" style="margin-top:0.375rem">
+        <b>這是預報不是現在正在打雷</b>，時距 3 小時一格。</div></div>`);
+  }
+
+  return head + `<div class="card pad" style="margin-bottom:0.75rem">${rows.join('')}${thunderNote()}</div>`;
+}
+
+function thunderNote() {
+  return `<details style="margin-top:0.5rem">
+    <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
+      這裡的雷是哪裡來的　·　點開</summary>
+    <p class="hint" style="margin:0.375rem 0">
+      <b>真正的落雷即時位置，這支程式拿不到。</b>
+      氣象署開放資料裡沒有免費的閃電定位資料集，那是加值服務。所以這裡只有兩種來源：<br><br>
+      ① <b>官方大雷雨即時訊息／雷雨特報</b>——走本來就在抓的天氣特報資料集。有發布才有，
+      那是官方對「哪個地區正在打雷」的判斷，也是最接近「現在正在打雷」的東西。<br>
+      ② <b>鄉鎮預報裡有雷的時段</b>——那是<b>預報</b>，不是現在。<br><br>
+      要看即時的雷達回波與閃電，請用<b>實況頁</b>的圖層，或
+      <a href="https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html" target="_blank" rel="noopener">氣象署雷達回波</a>。</p>
+  </details>`;
 }
 
 function wxCard() {
-  const st = wxSite();
   const head = `<div class="sec"><h2>天氣</h2></div>` + wxPicker();
-  /* 地點選不出來時,下拉還是要留著 —— 沒有下拉就沒有辦法改選,
-     使用者只會看到一片空白而不知道該按哪裡。 */
+  const mode = wxMode();
+  if (mode === 'all') return head + wxAllTable();
+
+  const st = wxSite();
   if (!st || st.gone) {
     return head + `<div class="msg ${st ? 'e' : 'i'}">${st
       ? '原本選的站臺已經不存在了，請從上面重新選一個地點。'
       : '還沒有可用的地點。'}</div>`;
   }
   if (st.pending) {
-    return head + `<div class="msg i">${GEO_BUSY ? '定位中…'
-      : '尚未取得目前位置。按上面的「重新定位」，或改選一個站臺。'}</div>`;
+    return head + wxWhere(st, '尚未定位')
+      + `<div class="msg i">${GEO_BUSY ? '定位中…'
+        : '尚未取得目前位置。按上面的「取得目前位置」，或改選一個站臺。'}</div>`;
   }
+  return head + wxDetail(st);
+}
+
+/* ── 全部站臺的天氣總表 ──────────────────────────────────
+   一站一列:現在下不下雨（實測）、接下來第一個有雨的時段（預報）、有沒有雷。
+   值班真正要問的是「我這幾站,哪一站要出事」,不是「某一站接下來三天怎樣」。
+   點一列就進到那一站的細節。                                        */
+function wxAllTable() {
+  const list = wxSites();
+  if (!list.length) {
+    return `<div class="msg i">還沒有任何有座標的站臺。天氣要靠座標才對得到雨量站與鄉鎮預報。</div>`;
+  }
+  const rows = list.map(x => {
+    const rn = nowRain(x);
+    const tf = townFor(x);
+    const ser = tf ? townSeries(tf.town).filter(y => y.to > Date.now()) : [];
+    const wet = ser.find(y => isRainy(y.wx) || (y.pop != null && y.pop >= 70));
+    const th = ser.find(y => isThunder(y.wx));
+    const zone = thunderFor(x);
+    return { x, rn, tf, wet, th, zone };
+  });
+  const anyThunder = rows.some(r => r.zone || r.th);
+
+  const cell = r => {
+    const nowTxt = !r.rn ? '<span style="color:var(--fg4)">無雨量站</span>'
+      : r.rn.raining
+        ? `<b style="color:var(--acc)">下雨中</b><br><span class="mono" style="color:var(--fg4)">${
+            r.rn.h1 == null ? '—' : r.rn.h1} mm/h</span>`
+        : '<span style="color:var(--fg3)">無雨</span>';
+    const fcTxt = !r.tf ? '<span style="color:var(--fg4)">—</span>'
+      : r.wet ? `<span style="color:var(--sb)">${relDay(r.wet.from)}${fmtClock(r.wet.from)}</span>`
+      : '<span style="color:var(--ok)">無</span>';
+    const thTxt = r.zone
+      ? `<b style="color:var(--no)">特報中</b>`
+      : r.th ? `<span style="color:var(--sb)">${relDay(r.th.from)}${fmtClock(r.th.from)}</span>`
+      : '<span style="color:var(--fg4)">—</span>';
+    return `<tr${r.zone ? ' style="background:var(--no-d)"' : (r.rn && r.rn.raining ? ' style="background:var(--acc-d)"' : '')}>
+      <td class="nm"><button type="button" class="lnk" onclick="setWxLoc('${esc(r.x.id)}')"
+        >${esc(r.x.name)}</button></td>
+      <td>${nowTxt}</td>
+      <td class="mono">${fcTxt}</td>
+      <td class="mono">${thTxt}</td></tr>`;
+  };
+
+  const wetN = rows.filter(r => r.rn && r.rn.raining).length;
+  const thN = rows.filter(r => r.zone).length;
+
+  return `<div class="card pad" style="margin-bottom:0.75rem">
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:baseline;margin-bottom:0.5rem">
+      <b style="font-size:1.0625rem;color:${thN ? 'var(--no)' : wetN ? 'var(--acc)' : 'var(--ok)'}">${
+        thN ? `${thN} 站在雷雨特報範圍` : wetN ? `${wetN} 站正在下雨` : '全部站臺目前都沒有下雨'}</b>
+      <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">共 ${list.length} 站　由北至南</span>
+    </div>
+    <div style="overflow-x:auto"><table class="impact wx">
+      <colgroup><col><col style="width:5rem"><col style="width:5rem"><col style="width:5rem"></colgroup>
+      <tr><th>站臺</th><th>現在</th><th>下次有雨</th><th>雷</th></tr>
+      ${rows.map(cell).join('')}</table></div>
+    ${(!WX && (WX_ERR || !rows.some(r => r.tf))) ? `<div class="msg ${WX_ERR ? 'e' : 'i'}" style="margin:0.5rem 0 0">${
+      WX_ERR ? `預報取得失敗：${esc(WX_ERR)}。資料集代號可在設定「天氣預報來源」修改。`
+      : '尚未取得鄉鎮天氣預報。按颱風頁上方「更新」，或到設定確認授權碼與「天氣預報來源」。'}</div>` : ''}
+    <p class="hint" style="margin-top:0.5rem">
+      <b>「現在」是雨量站實測</b>（10 分鐘累積），<b>「下次有雨」與「雷」是預報</b>（3 小時一格）；
+      「雷　特報中」才是官方認定該地區正在打雷。點站臺名稱看那一站的完整預報。
+      ${anyThunder ? '' : ''}</p>
+  </div>`;
+}
+
+/* ── 單一地點的完整預報 ───────────────────────────────── */
+function wxDetail(st) {
   const rn = nowRain(st);
+  const zone = thunderFor(st);
+  const where = wxWhere(st, st.geo ? 'GPS 定位' : (countyOf(st) || ''));
+
   const nowLine = rn
     ? `<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">
         <b style="font-size:1.0625rem;color:${rn.raining ? 'var(--acc)' : 'var(--fg2)'}">${
@@ -3240,9 +3582,14 @@ function wxCard() {
           實測　${esc(rn.name)} ${rn.km} km</span></div>`
     : '<div style="color:var(--fg4)">附近沒有可用的雨量站，無法判斷現在有沒有下雨。</div>';
 
+  const zoneLine = zone
+    ? `<div class="msg e" style="margin:0.5rem 0 0"><b>這一站在「${esc(zone.kind)}」範圍內</b>
+       （${esc(zone.area)}${zone.end ? `，至 ${fmtShort(zone.end)}` : ''}）。
+       依單位規定，雷雨期間應關閉站臺設備。</div>` : '';
+
   const tf = townFor(st);
   if (!tf) {
-    return head + `<div class="card pad" style="margin-bottom:0.75rem">${nowLine}
+    return where + `<div class="card pad" style="margin-bottom:0.75rem">${nowLine}${zoneLine}
       <div class="msg ${WX_ERR ? 'e' : 'i'}" style="margin:0.625rem 0 0">${
         WX_ERR ? `預報取得失敗：${esc(WX_ERR)}。資料集代號可在設定「天氣預報來源」修改。`
         : '尚未取得鄉鎮天氣預報。按颱風頁上方「更新」，或到設定確認授權碼與「天氣預報來源」。'}</div></div>`;
@@ -3253,12 +3600,12 @@ function wxCard() {
   const later = ser.filter(x => x.from >= Date.now() + 48 * 3600000);
 
   const cell = x => {
-    const rain = isRainy(x.wx);
+    const rain = isRainy(x.wx), th = isThunder(x.wx);
     const popCol = x.pop == null ? 'var(--fg4)' : x.pop >= 70 ? 'var(--no)' : x.pop >= 30 ? 'var(--sb)' : 'var(--fg3)';
-    return `<tr${rain ? ' style="background:var(--acc-d)"' : ''}>
+    return `<tr${th ? ' style="background:var(--no-d)"' : rain ? ' style="background:var(--acc-d)"' : ''}>
       <td class="mono" style="white-space:nowrap">${relDay(x.from)}<br>
         <span style="color:var(--fg4)">${fmtClock(x.from)}–${fmtClock(x.to)}</span></td>
-      <td style="color:${rain ? 'var(--acc)' : 'var(--fg2)'}">${esc(x.wx || '—')}</td>
+      <td style="color:${th ? 'var(--no)' : rain ? 'var(--acc)' : 'var(--fg2)'}">${esc(x.wx || '—')}</td>
       <td class="mono" style="color:${popCol};font-weight:700;text-align:right">${
         x.pop == null ? '—' : x.pop + '%'}</td>
       <td class="mono" style="text-align:right">${x.t == null ? '—' : x.t + '°'}</td>
@@ -3272,7 +3619,6 @@ function wxCard() {
     <tr><th>時段</th><th>天氣</th><th>降雨</th><th>溫度</th><th>風</th></tr>
     ${rows.map(cell).join('')}</table></div>`;
 
-  // 未來 24 小時直接列出來,24–48 小時收在折疊裡 —— 值班先看的是接下來這一天
   const soon = h48.filter(x => x.from < Date.now() + 24 * 3600000);
   const rest = h48.filter(x => x.from >= Date.now() + 24 * 3600000);
 
@@ -3283,8 +3629,8 @@ function wxCard() {
       : `<b style="color:var(--acc)">${relDay(firstRain.from)}${fmtClock(firstRain.from)}</b> 起預報有雨`)
     : '<span style="color:var(--ok)">未來預報時段內都沒有明顯降雨</span>';
 
-  return head + `<div class="card pad" style="margin-bottom:0.75rem">
-    ${nowLine}
+  return where + `<div class="card pad" style="margin-bottom:0.75rem">
+    ${nowLine}${zoneLine}
     <div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid var(--edge)">
       <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">預報</span>
       ${lead}
@@ -3525,6 +3871,17 @@ function briefText() {
 
   L.push(`【今日氣象概況與警報】（更新時間：${fmtDayTime(DB.ty.at || Date.now())}）`);
 
+  /* 播報稿也要靈活:今天真正的重點是什麼,就先講什麼。
+     固定從颱風動態開始念,在颱風四千公里外、卻正在打雷的日子是本末倒置。 */
+  {
+    const f = todayFocus()[0];
+    if (f && f.rank >= 30) {
+      L.push('');
+      L.push(`本日重點：${f.key}——${String(f.val).replace(/<[^>]+>/g, '')}`
+        + `（${String(f.sub).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()}）`);
+    }
+  }
+
   // ── 颱風動態 ──
   L.push('');
   L.push(`${TC_FULL[tcClass(ty.vmax)] || '熱帶氣旋'} ${ty.name}` +
@@ -3535,8 +3892,11 @@ function briefText() {
   }
   if (ty.pres) L.push(`${IN}中心氣壓：${Math.round(ty.pres)} 百帕。`);
   if (WARN && WARN.cpa) {
-    L.push(`${IN}最接近時間：推估為${fmtWhen(WARN.cpa.t)}（距臺約 ${Math.round(WARN.cpa.d)} 公里）。`
-      + (EXTRAP ? '［外推路徑推算，非官方預報］' : ''));
+    const km = Math.round(WARN.cpa.d);
+    /* 四千公里外還寫「最接近時間」,唸出來就像快到了。距離遠就直說遠。 */
+    L.push(`${IN}路徑最近時刻：推估為${fmtWhen(WARN.cpa.t)}，屆時距臺約 ${km} 公里`
+      + (km > CPA_MID ? '，距離很遠、對臺灣無影響' : km > CPA_NEAR ? '，仍有距離' : '')
+      + '。' + (EXTRAP ? '［外推路徑推算，非官方預報］' : ''));
   }
   if (!ty.official) L.push(`${IN}資料來源：GDACS 全球災害警報系統（非官方，僅觀測位置）。`);
 
@@ -3562,13 +3922,14 @@ function briefText() {
      現在有沒有在下雨是**實測**（雨量站 10 分鐘累積）,預報是鄉鎮預報**逐 3 小時**。
      兩件事分開講,不要混在一起 —— 值班回報時「現在」跟「等一下」的責任不一樣。 */
   {
-    const wst0 = wxSite();
+    const wst0 = wxPrimary();
     const wst = (wst0 && Number.isFinite(wst0.lat)) ? wst0 : null;
     const rn = wst ? nowRain(wst) : null;
     const tf = wst ? townFor(wst) : null;
     if (rn || tf) {
       L.push('');
-      L.push(`天氣（${wst.name}${wst.geo ? '，GPS 定位' : ''}）`);
+      L.push(`天氣（${wst.name}${wst.geo ? '，GPS 定位' : ''}${
+        wst.fallback ? '，代表點' : ''}）`);
       if (rn) {
         L.push(`${IN}目前天候：${rn.raining ? '正在降雨' : '未降雨'}` +
           `（${rn.name}實測，10 分鐘 ${rn.m10 == null ? '—' : rn.m10} 毫米、` +
@@ -3819,6 +4180,32 @@ function typhoonPicker() {
     <div class="tp-r">${chips}</div></div>`;
 }
 
+/* 「中心最接近」這個標題配上紅字,在距離四千公里的時候讀起來像是
+   「快要靠近了」。使用者的原話:「目前颱風這麼遠，你又用中心最接近
+   這個字眼很容易讓人誤會」。
+
+   標題與顏色都要跟著距離走 —— 同一個數字,在 200 公里和 4000 公里
+   是完全不同的兩件事,不能長得一樣。                              */
+const CPA_NEAR = 300, CPA_MID = 1000;      // 公里
+function cpaLook(km) {
+  if (km <= CPA_NEAR) return { title: '最接近臺灣', col: '#EF5B4C', icon: '🎯',
+    note: '距離已在暴風可能影響的範圍' };
+  if (km <= CPA_MID) return { title: '路徑最近時刻（推估）', col: '#EFAA35', icon: '📍',
+    note: '仍有距離，尚未構成直接影響' };
+  return { title: '路徑最近時刻（推估）', col: 'var(--fg3)', icon: '📍',
+    note: '距離很遠，對臺灣無影響' };
+}
+function cpaRowHtml(cpa) {
+  const km = Math.round(cpa.d);
+  const L = cpaLook(km);
+  return `<div class="warnrow"><div class="wi" style="background:${
+      L.col.startsWith('#') ? L.col + '22' : 'var(--surf)'};color:${L.col}">${L.icon}</div>
+    <div class="wt"><b>${L.title}</b><small>最近時距臺灣約 ${km} 公里　${L.note}</small></div>
+    <div class="wv" style="color:${L.col}">${fmtWhen(cpa.t)}
+      <br><span style="color:var(--fg4);font-weight:400">${fmtShort(cpa.t)}　${relative(cpa.t)}</span>
+    </div></div>`;
+}
+
 function warningCard() {
   if (!WARN) return `<div class="msg w">目前來源沒有官方預報路徑，無法推算警報時機。到設定填入中央氣象署授權碼即可啟用。</div>`;
 
@@ -3828,12 +4215,7 @@ function warningCard() {
      「預估發布陸上颱風警報」這種根本不會發生的結論。      */
   if (!WARN.isTy) {
     const ty0 = DB.ty.data;
-    const cpa = WARN.cpa
-      ? `<div class="warnrow"><div class="wi" style="background:#EF5B4C22;color:#EF5B4C">🎯</div>
-         <div class="wt"><b>中心最接近</b><small>距臺灣最近約 ${Math.round(WARN.cpa.d)} 公里</small></div>
-         <div class="wv" style="color:#EF5B4C">${fmtWhen(WARN.cpa.t)}
-         <br><span style="color:var(--fg4);font-weight:400">${fmtShort(WARN.cpa.t)}　${relative(WARN.cpa.t)}</span></div></div>`
-      : '';
+    const cpa = WARN.cpa ? cpaRowHtml(WARN.cpa) : '';
     return `<div class="sec"><h2>警報時機預判</h2></div>
       <div class="msg i" style="margin-bottom:0.75rem">
         目前是<b>${TC_FULL[tcClass(ty0 ? ty0.vmax : 0)] || '熱帶性低氣壓'}</b>
@@ -3872,10 +4254,7 @@ function warningCard() {
     rows.push(row('🌊', '#54C7EA', '海上颱風警報', s.sub, s.val));
     rows.push(row('🏝', '#EFAA35', '陸上颱風警報', l.sub, l.val));
   }
-  if (WARN.cpa) {
-    rows.push(row('🎯', '#EF5B4C', '中心最接近',
-      `距臺灣最近約 ${Math.round(WARN.cpa.d)} 公里`, two(WARN.cpa.t)));
-  }
+  if (WARN.cpa) rows.push(cpaRowHtml(WARN.cpa));
   if (WARN.sea) {
     rows.push(row('✅', '#3ECB92', '預估解除警報', '暴風範圍完全脫離近海之後', two(WARN.sea.clear)));
   }
@@ -5918,7 +6297,7 @@ function goTySub(k) {
 let _windyReady = null;
 function renderWindyIfReady() { if (_windyReady) _windyReady(); }
 
-window.setWxLoc = setWxLoc; window.locateMe = locateMe;
+window.setWxLoc = setWxLoc; window.locateMe = locateMe; window.setWxMode = setWxMode;
 window.exportInvite = exportInvite; window.exportSyncPack = exportSyncPack;
 window.unbindPeer = unbindPeer; window.rebindPeer = rebindPeer;
 window.forgetPeer = forgetPeer; window.leaveTeam = leaveTeam;
