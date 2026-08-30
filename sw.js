@@ -6,7 +6,7 @@
  * 氣象資料是唯一的例外 —— 過期的颱風資訊比沒有資訊更危險,
  * 所以 CWA / GDACS 的請求一律直接走網路,絕不快取。
  */
-const CACHE = 'galepost-v38';
+const CACHE = 'galepost-v39';
 const SHELL = [
   './',
   './index.html',

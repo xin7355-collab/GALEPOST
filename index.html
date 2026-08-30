@@ -326,6 +326,66 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
 .seg.tysub button{flex:1 0 calc(25% - 1px)}
 
 /* 天氣地點下拉。旁邊要留位置給「重新定位」,所以不吃滿整行。 */
+/* ── 天氣：站臺卡片 ────────────────────────────────────
+   一站一張卡,左邊名字與狀態,右邊大字。表格要靠欄位對齊才讀得懂,
+   而站臺名稱長度差很多,對不齊就得瞇著眼睛找。 */
+.wxcard{display:flex;align-items:center;gap:0.625rem;width:100%;text-align:left;
+  background:var(--surf);border:1px solid var(--edge);border-left-width:3px;
+  border-radius:var(--r2);padding:0.625rem 0.75rem;margin-bottom:0.375rem}
+.wxcard:active{background:var(--bg2)}
+.wxcard .wc-l{flex:1;min-width:0}
+.wxcard .wc-n{display:block;font-size:1rem;font-weight:700;color:var(--fg)}
+.wxcard .wc-s{display:block;font-size:0.8125rem;color:var(--fg2);margin-top:0.0625rem}
+.wxcard .wc-b{display:block;font-size:0.7188rem;color:var(--fg3);margin-top:0.1875rem;line-height:1.5}
+.wxcard .wc-r{flex:0 0 auto;text-align:right;line-height:1.2}
+.wxcard .wc-i{display:block;font-size:1.375rem}
+.wxcard .wc-t{display:block;font-size:1rem;font-weight:700;font-family:var(--mono)}
+.wxcard .wc-p{display:block;font-size:0.6875rem;font-family:var(--mono);color:var(--fg4)}
+.wxcard .wc-a{flex:0 0 auto;color:var(--fg4)}
+
+/* 大字現況 */
+.wxhero .wh-top{display:flex;align-items:center;gap:0.75rem}
+.wxhero .wh-i{font-size:2.25rem;line-height:1}
+.wxhero .wh-m{flex:1;min-width:0}
+.wxhero .wh-v{display:block;font-size:1.25rem;font-weight:700;line-height:1.25}
+.wxhero .wh-s{display:block;font-size:0.8125rem;color:var(--fg2);margin-top:0.125rem}
+.wxhero .wh-r{font-size:0.75rem;color:var(--fg3);margin-top:0.5rem;
+  padding-top:0.5rem;border-top:1px solid var(--edge);line-height:1.7}
+
+/* 橫向逐 3 小時。一個螢幕寬看得到好幾格,比八列的表格省很多空間。
+   注意:一格是 3 小時,不是 1 小時 —— 每一格都標出起始時刻。 */
+.wxstrip{display:flex;gap:0.375rem;overflow-x:auto;padding:0.125rem 0 0.375rem;
+  -webkit-overflow-scrolling:touch;scroll-snap-type:x proximity}
+.wxstrip .ws-c{flex:0 0 4.25rem;scroll-snap-align:start;text-align:center;
+  background:var(--bg2);border:1px solid var(--edge);border-radius:var(--r2);
+  padding:0.4375rem 0.25rem;line-height:1.35}
+.wxstrip .ws-c.wet{background:var(--acc-d);border-color:var(--acc)}
+.wxstrip .ws-c.hot{background:var(--no-d);border-color:var(--no)}
+.wxstrip .ws-d{display:block;font-size:0.625rem;color:var(--fg4)}
+.wxstrip .ws-t{display:block;font-size:0.75rem;color:var(--fg2);font-weight:700}
+.wxstrip .ws-i{display:block;font-size:1.25rem;margin:0.125rem 0}
+.wxstrip .ws-w{display:block;font-size:0.625rem;color:var(--fg3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wxstrip .ws-p{display:block;font-size:0.75rem;font-weight:700}
+.wxstrip .ws-g{display:block;font-size:0.75rem;color:var(--fg2)}
+.wxstrip .ws-b{display:block;font-size:0.625rem;color:var(--fg4)}
+
+/* 逐日 */
+.sec2{font-size:0.6875rem;letter-spacing:.11em;color:var(--fg4);font-family:var(--mono);
+  margin:0.625rem 0 0.25rem;padding-top:0.5rem;border-top:1px solid var(--edge)}
+.wxday{display:flex;align-items:center;gap:0.4375rem;padding:0.3125rem 0;font-size:0.8125rem}
+.wxday .wd-n{flex:0 0 3.5rem;font-weight:700}
+.wxday .wd-i{flex:0 0 1.25rem;text-align:center}
+.wxday .wd-p{flex:0 0 2.25rem;font-size:0.6875rem;text-align:right}
+.wxday .wd-lo,.wxday .wd-hi{flex:0 0 2rem;text-align:right;color:var(--fg3)}
+.wxday .wd-hi{color:var(--fg);font-weight:700}
+.wxday .wd-bar{flex:1;min-width:2.5rem;height:0.25rem;border-radius:2px;
+  background:var(--edge);position:relative}
+.wxday .wd-bar i{position:absolute;top:0;bottom:0;border-radius:2px;
+  background:linear-gradient(90deg,var(--sb),var(--wt,#EFAA35))}
+/* 沒有溫度資料就直說,不要留一條空的灰軌 —— 那看起來像壞掉。 */
+.wxday .wd-none{flex:1;text-align:right;font-size:0.6875rem;color:var(--fg4)}
+
 /* 總表裡的站臺名稱可以按進去看細節。做成連結的樣子而不是按鈕 ——
    一整欄的按鈕框會把表格擠爆。 */
 .lnk{background:none;color:var(--acc);font:inherit;font-weight:600;padding:0;text-align:left}
@@ -875,6 +935,8 @@ function fmtHM(ts) {
    所以這裡自己取一份最小的表,不依賴宣告順序）。 */
 const WK_CH = ['日', '一', '二', '三', '四', '五', '六'];
 const wk = ts => WK_CH[new Date(ts).getDay()];
+const sameDay = (a, b) => { const x = new Date(a), y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate(); };
 function fmtMD(ts) { const d = new Date(ts); return `${d.getMonth() + 1}月${d.getDate()}日(${wk(ts)})`; }
 function fmtShort(ts) {
   const d = new Date(ts);
@@ -1147,7 +1209,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v38';
+const APP_VER = 'v39';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1551,15 +1613,41 @@ function parseTownFc(j) {
         const times = toArr(pick(E, 'Time', 'time')).map(T => {
           const from = pick(T, 'StartTime', 'startTime', 'DataTime', 'dataTime');
           const to = pick(T, 'EndTime', 'endTime');
-          const ev = toArr(pick(T, 'ElementValue', 'elementValue'))[0] || {};
-          // 新版每個欄位有自己的鍵名;舊版一律叫 value
-          const v = pick(ev, 'Weather', 'WeatherDescription', 'ProbabilityOfPrecipitation',
-            'Temperature', 'RelativeHumidity', 'WindSpeed', 'WindDirection', 'BeaufortScale',
-            'MaxTemperature', 'MinTemperature', 'value');
+          const evRaw = pick(T, 'ElementValue', 'elementValue');
+          /* elementValue **可能直接就是一個字串**（"陰天"、"80"）,不是只有
+             [{value:…}] 那一種。使用者提供的真實回應就是字串那一種 ——
+             照原本的寫法會取到 undefined,整份預報靜靜變成空白。 */
+          let v, code = '';
+          if (typeof evRaw === 'string' || typeof evRaw === 'number') {
+            v = evRaw;
+          } else {
+            const ev = toArr(evRaw)[0];
+            if (typeof ev === 'string' || typeof ev === 'number') v = ev;
+            else {
+              // 新版每個欄位有自己的鍵名;舊版一律叫 value
+              v = pick(ev || {}, 'Weather', 'WeatherDescription', 'ProbabilityOfPrecipitation',
+                'Temperature', 'RelativeHumidity', 'WindSpeed', 'WindDirection', 'BeaufortScale',
+                'MaxTemperature', 'MinTemperature', 'value');
+              code = String(pick(ev || {}, 'WeatherCode', 'weatherCode') || '');
+            }
+          }
+          /* 風速藏在 parameter[] 裡（風速／風級／風向描述）,不在 elementValue。
+             舊格式的 Wind 欄位 elementValue 是空字串,真正的值全在 parameter。 */
+          const par = toArr(pick(T, 'parameter', 'Parameter'));
+          const pv = nm => {
+            const h = par.find(x => String(pick(x || {}, 'parameterName', 'ParameterName') || '') === nm);
+            return h ? String(pick(h, 'parameterValue', 'ParameterValue') || '') : '';
+          };
+          if (!code) code = pv('天氣圖示代碼');
+          const ws = pv('風速'), bf = pv('風級'), wd = pv('風向描述');
+          if ((v == null || v === '') && (ws || bf || wd)) v = ws || bf || wd;
           return { from: from ? wxTime(from) : NaN, to: to ? wxTime(to) : NaN,
-            v: v == null ? '' : String(v),
-            code: String(pick(ev, 'WeatherCode', 'weatherCode') || '') };
-        }).filter(x => Number.isFinite(x.from));
+            v: v == null ? '' : String(v), code,
+            ws, bf, wd };
+        }).filter(x => Number.isFinite(x.from))
+          /* 官方回傳的時間**不保證照順序**（真實樣本裡 3/11 12:00 排在 3/9 18:00 前面）。
+             不排的話整張預報表的時序是亂的。 */
+          .sort((a, b) => a.from - b.from);
         els[en] = times;
       }
       if (Object.keys(els).length) out.push({ name: String(name), lat, lng, els });
@@ -1569,15 +1657,23 @@ function parseTownFc(j) {
   return out;
 }
 
-/* 欄位名稱在不同資料集之間不一樣,依序找第一個有東西的。 */
-const wxEl = (t, ...names) => {
-  for (const n of names) {
-    for (const k of Object.keys(t.els)) {
-      if (k === n || k.includes(n)) { if (t.els[k] && t.els[k].length) return t.els[k]; }
-    }
-  }
-  return [];
-};
+/* 欄位名稱在不同資料集之間不一樣,依序找第一個有東西的。
+   **完全相同的名稱一律優先**:舊格式裡溫度叫 T、體感溫度叫 AT,
+   而 'AT'.includes('T') 為真 —— 只做包含比對會把體感溫度當成溫度。 */
+const wxEl = (t, ...names) => (wxEls(t, ...names)[0] || []);
+
+/* 有時候**不只一個**欄位在講同一件事,而且各自只涵蓋一段時間:
+   逐 3 小時那一支給「溫度」（只到 +2 天）,一週那一支給「平均溫度」。
+   只取第一個找到的,第 3 天以後就永遠是空的。
+   所以回傳**全部**符合的,由呼叫端逐一往下找哪一個涵蓋這個時刻。 */
+function wxEls(t, ...names) {
+  const ks = Object.keys(t.els);
+  const out = [];
+  const push = k => { const a = t.els[k]; if (a && a.length && !out.includes(a)) out.push(a); };
+  for (const n of names) for (const k of ks) if (k === n) push(k);
+  for (const n of names) for (const k of ks) if (k.includes(n)) push(k);
+  return out;
+}
 
 /* 把一個鄉鎮的各欄位併成一條時間序列。以「天氣現象」的時距為主軸 ——
    降雨機率有時是 3 小時、有時是 6 或 12 小時,以它為主軸會少掉一半的格子。 */
@@ -1591,24 +1687,101 @@ function townSeries(t) {
     }
     return '';
   };
-  const pop = wxEl(t, '降雨機率', 'PoP');
-  const tmp = wxEl(t, '溫度', 'T');
-  const rh = wxEl(t, '相對濕度', 'RH');
-  const ws = wxEl(t, '風速', 'WS');
-  const wd = wxEl(t, '風向', 'WD');
-  return wx.map(x => ({
-    from: x.from,
-    to: Number.isFinite(x.to) ? x.to : x.from + 3 * 3600000,
-    wx: x.v, code: x.code,
-    pop: wxNum(at(pop, x.from)),
-    t: wxNum(at(tmp, x.from)),
-    rh: wxNum(at(rh, x.from)),
-    ws: wxNum(at(ws, x.from)),
-    wd: at(wd, x.from),
-  }));
+  /* 取整筆而不只是取值 —— 風速在舊格式裡藏在 parameter 裡（x.ws / x.bf）,
+     只看 elementValue 會永遠是空的。 */
+  const atRec = (arr, ts) => {
+    for (const x of arr) {
+      const to = Number.isFinite(x.to) ? x.to : x.from + 3 * 3600000;
+      if (ts >= x.from && ts < to) return x;
+    }
+    return null;
+  };
+  // 每一項都可能分散在好幾個欄位（各自涵蓋不同的時間範圍）
+  const atAll = (arrs, ts) => { for (const a of arrs) { const v = at(a, ts); if (v !== '') return v; } return ''; };
+  const atRecAll = (arrs, ts) => { for (const a of arrs) { const r = atRec(a, ts); if (r) return r; } return null; };
+  const pop = wxEls(t, '降雨機率', 'PoP');
+  const tmp = wxEls(t, '溫度', 'T', '平均溫度', 'MaxTemperature', 'MinTemperature');
+  const rh = wxEls(t, '相對濕度', 'RH');
+  const wsE = wxEls(t, '風速', 'WS', 'Wind');
+  const wdE = wxEls(t, '風向', 'WD', 'Wind');
+  return wx.map(x => {
+    const w = atRecAll(wsE, x.from), d = atRecAll(wdE, x.from);
+    /* 舊格式的風速寫成 "<=1" 這種字串,parseFloat 會得到 NaN —— 那是對的,
+       但風級（Beaufort）也在 parameter 裡,拿得到就直接用,不要硬換算。 */
+    const wsNum = w ? wxNum(w.ws || w.v) : null;
+    const bfNum = w ? wxNum(w.bf) : null;
+    return {
+      from: x.from,
+      to: Number.isFinite(x.to) ? x.to : x.from + 3 * 3600000,
+      wx: x.v, code: x.code,
+      pop: wxNum(atAll(pop, x.from)),
+      t: wxNum(atAll(tmp, x.from)),
+      rh: wxNum(atAll(rh, x.from)),
+      ws: wsNum,
+      bf: bfNum,
+      wd: d ? (d.wd || d.v || '') : '',
+    };
+  });
 }
 
 const isRainy = w => /雨|雷|陣雨|豪|雹/.test(String(w || ''));
+
+/* ── 天氣圖示與逐日彙整 ──────────────────────────────────
+   使用者拿 iOS 天氣 App 當參考,問「改成這樣會不會比較清楚」。
+   會 —— 但要借的是**結構**不是外觀:
+   ① 地點做成一張張卡片,不是表格的一列（手機上卡片好掃太多）
+   ② 逐時做成**橫向捲動條**,一個螢幕寬看得到八格,而不是八列
+   ③ 遠一點的日子做成**逐日一行**,不是「12 小時一格 × 9 格」
+
+   ※ 本程式的「逐時」實際上是**逐 3 小時**,官方最細就是這樣,
+     所以每一格都標出時段起訖,不假裝是一小時。               */
+function wxIcon(text, ts) {
+  const w = String(text || '');
+  const h = Number.isFinite(ts) ? new Date(ts).getHours() : 12;
+  const night = h >= 18 || h < 6;
+  if (/雷/.test(w)) return '⛈️';
+  if (/雹/.test(w)) return '🌨️';
+  if (/雪/.test(w)) return '❄️';
+  if (/豪雨|大雨/.test(w)) return '🌧️';
+  if (/雨/.test(w)) return night ? '🌧️' : '🌦️';
+  if (/霧|靄/.test(w)) return '🌫️';
+  if (/陰/.test(w)) return '☁️';
+  if (/多雲/.test(w)) return night ? '☁️' : '⛅';
+  if (/晴/.test(w)) return night ? '🌙' : '☀️';
+  return night ? '🌙' : '☀️';
+}
+
+// 一天之內出現過的天氣,取「最該注意的那一個」當代表圖示
+const WX_SEV = [[/雷/, 5], [/豪雨|大雨/, 4], [/雨/, 3], [/陰/, 2], [/多雲/, 1], [/晴/, 0]];
+const wxSev = w => { for (const [re, n] of WX_SEV) if (re.test(String(w || ''))) return n; return 0; };
+
+/* 把逐 3 小時（與後面 12 小時一格）的序列彙整成逐日。
+   低溫／高溫取當天的極值,降雨機率取當天最大 —— 那是值班要問的
+   「這一天會不會下」,不是平均起來的一個沒有意義的數字。 */
+function townDays(ser) {
+  const by = new Map();
+  for (const x of ser) {
+    const d = new Date(x.from);
+    const k = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    if (!by.has(k)) by.set(k, { key: k, at: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(),
+      lo: null, hi: null, pop: null, wx: '', sev: -1, thunder: false });
+    const g = by.get(k);
+    if (Number.isFinite(x.t)) {
+      g.lo = g.lo == null ? x.t : Math.min(g.lo, x.t);
+      g.hi = g.hi == null ? x.t : Math.max(g.hi, x.t);
+    }
+    if (Number.isFinite(x.pop)) g.pop = g.pop == null ? x.pop : Math.max(g.pop, x.pop);
+    const sv = wxSev(x.wx);
+    if (sv > g.sev) { g.sev = sv; g.wx = x.wx; }
+    if (isThunder(x.wx)) g.thunder = true;
+  }
+  return [...by.values()].sort((a, b) => a.at - b.at);
+}
+
+/* 一格的風級。官方若直接給了風級（Beaufort）就用官方的 ——
+   自己拿 m/s 換算會跟官方的數字不一致,而值班看的是同一份預報。 */
+const slotBf = x => Number.isFinite(x.bf) ? Math.round(x.bf)
+  : (Number.isFinite(x.ws) ? ms2bf(x.ws) : null);
 
 async function fetchForecast(key) {
   const ids = [
@@ -3780,104 +3953,164 @@ function wxCard() {
   return head + wxDetail(st);
 }
 
-/* ── 全部站臺的天氣總表 ──────────────────────────────────
-   一站一列:現在下不下雨（實測）、接下來第一個有雨的時段（預報）、有沒有雷。
-   值班真正要問的是「我這幾站,哪一站要出事」,不是「某一站接下來三天怎樣」。
-   點一列就進到那一站的細節。                                        */
+/* ── 全部站臺：卡片列 ────────────────────────────────────
+   本來是一張表。表格在手機上要靠欄位對齊才讀得懂,而站臺名稱長度
+   差很多,對不齊就得瞇著眼睛找。改成一站一張卡:左邊名字與狀態,
+   右邊大字寫**最該知道的那一個數字**,底下一行摘要。            */
 function wxAllTable() {
   const list = wxSites();
   if (!list.length) {
     return `<div class="msg i">還沒有任何有座標的站臺。天氣要靠座標才對得到雨量站與鄉鎮預報。</div>`;
   }
+  const R = ltnRadius();
   const rows = list.map(x => {
     const rn = nowRain(x);
     const tf = townFor(x);
     const ser = tf ? townSeries(tf.town).filter(y => y.to > Date.now()) : [];
+    const cur = ser[0] || null;
     const wet = ser.find(y => isRainy(y.wx) || (y.pop != null && y.pop >= 70));
     const th = ser.find(y => isThunder(y.wx));
     const zone = thunderFor(x);
-    return { x, rn, tf, wet, th, zone };
+    const st = strikesNear(x, R);
+    return { x, rn, tf, ser, cur, wet, th, zone, st };
   });
-  const anyThunder = rows.some(r => r.zone || r.th);
+  const wetN = rows.filter(r => r.rn && r.rn.raining).length;
+  const thN = rows.filter(r => r.zone || r.st.cg > 0).length;
 
-  const cell = r => {
-    const nowTxt = !r.rn ? '<span style="color:var(--fg4)">無雨量站</span>'
-      : r.rn.raining
-        ? `<b style="color:var(--acc)">下雨中</b><br><span class="mono" style="color:var(--fg4)">${
-            r.rn.h1 == null ? '—' : r.rn.h1} mm/h</span>`
-        : '<span style="color:var(--fg3)">無雨</span>';
-    const fcTxt = !r.tf ? '<span style="color:var(--fg4)">—</span>'
-      : r.wet ? `<span style="color:var(--sb)">${relDay(r.wet.from)}${fmtClock(r.wet.from)}</span>`
-      : '<span style="color:var(--ok)">無</span>';
-    const thTxt = r.zone
-      ? `<b style="color:var(--no)">特報中</b>`
-      : r.th ? `<span style="color:var(--sb)">${relDay(r.th.from)}${fmtClock(r.th.from)}</span>`
-      : '<span style="color:var(--fg4)">—</span>';
-    return `<tr${r.zone ? ' style="background:var(--no-d)"' : (r.rn && r.rn.raining ? ' style="background:var(--acc-d)"' : '')}>
-      <td class="nm"><button type="button" class="lnk" onclick="setWxLoc('${esc(r.x.id)}')"
-        >${esc(r.x.name)}</button></td>
-      <td>${nowTxt}</td>
-      <td class="mono">${fcTxt}</td>
-      <td class="mono">${thTxt}</td></tr>`;
+  /* 排序:有事的排前面。由北至南是「找某一站」的順序,
+     但這一頁問的是「哪一站要出事」—— 那就該讓出事的浮上來。 */
+  const score = r => (r.st.cg > 0 ? 400 : 0) + (r.zone ? 300 : 0)
+    + (r.rn && r.rn.raining ? 200 : 0) + (r.th ? 50 : 0) + (r.wet ? 10 : 0);
+  const sorted = rows.slice().sort((a, b) => score(b) - score(a));
+
+  const card = r => {
+    const hot = r.st.cg > 0 || r.zone;
+    const wetNow = r.rn && r.rn.raining;
+    const col = hot ? 'var(--no)' : wetNow ? 'var(--acc)' : 'var(--fg3)';
+    const bits = [];
+    if (r.st.cg > 0) bits.push(`<b style="color:var(--no)">${R} km 內 ${r.st.cg} 次雲對地落雷</b>`);
+    else if (r.zone) bits.push(`<b style="color:var(--no)">${esc(r.zone.kind)}範圍內</b>`);
+    if (wetNow) bits.push(`時雨量 ${r.rn.h1 == null ? '—' : r.rn.h1} mm`
+      + `　24 小時 ${r.rn.h24 == null ? '—' : Math.round(r.rn.h24)} mm`);
+    if (!wetNow && r.wet) bits.push(`${relDay(r.wet.from)}${fmtClock(r.wet.from)} 起預報有雨`);
+    if (!wetNow && !r.wet && r.tf) bits.push('預報時段內無明顯降雨');
+    if (!r.rn) bits.push('無鄰近雨量站');
+    if (!r.tf) bits.push(WX_ERR ? '預報取得失敗' : '尚未取得預報');
+
+    return `<button type="button" class="wxcard" onclick="setWxLoc('${esc(r.x.id)}')"
+      style="border-left-color:${col}">
+      <span class="wc-l">
+        <b class="wc-n">${esc(r.x.name)}</b>
+        <span class="wc-s">${wetNow ? '<span style="color:var(--acc)">正在下雨</span>'
+          : r.cur ? esc(r.cur.wx || '—') : '—'}
+          <span style="color:var(--fg4)">　${S_LABEL[r.x.status] || ''}</span></span>
+        <span class="wc-b">${bits.join('　')}</span>
+      </span>
+      <span class="wc-r">
+        <span class="wc-i">${r.cur ? wxIcon(r.cur.wx, r.cur.from) : '—'}</span>
+        <span class="wc-t">${r.cur && r.cur.t != null ? r.cur.t + '°' : ''}</span>
+        <span class="wc-p">${r.cur && r.cur.pop != null ? r.cur.pop + '%' : ''}</span>
+      </span>
+      <span class="wc-a">›</span></button>`;
   };
 
-  const wetN = rows.filter(r => r.rn && r.rn.raining).length;
-  const thN = rows.filter(r => r.zone).length;
-
-  return `<div class="card pad" style="margin-bottom:0.75rem">
-    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:baseline;margin-bottom:0.5rem">
+  return `<div class="card pad" style="margin-bottom:0.5rem">
       <b style="font-size:1.0625rem;color:${thN ? 'var(--no)' : wetN ? 'var(--acc)' : 'var(--ok)'}">${
-        thN ? `${thN} 站在雷雨特報範圍` : wetN ? `${wetN} 站正在下雨` : '全部站臺目前都沒有下雨'}</b>
-      <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">共 ${list.length} 站　由北至南</span>
-    </div>
-    <div style="overflow-x:auto"><table class="impact wx">
-      <colgroup><col><col style="width:5rem"><col style="width:5rem"><col style="width:5rem"></colgroup>
-      <tr><th>站臺</th><th>現在</th><th>下次有雨</th><th>雷</th></tr>
-      ${rows.map(cell).join('')}</table></div>
-    ${(!WX && (WX_ERR || !rows.some(r => r.tf))) ? `<div class="msg ${WX_ERR ? 'e' : 'i'}" style="margin:0.5rem 0 0">${
-      WX_ERR ? `預報取得失敗：${esc(WX_ERR)}。資料集代號可在設定「天氣預報來源」修改。`
-      : '尚未取得鄉鎮天氣預報。按颱風頁上方「更新」，或到設定確認授權碼與「天氣預報來源」。'}</div>` : ''}
-    <p class="hint" style="margin-top:0.5rem">
-      <b>「現在」是雨量站實測</b>（10 分鐘累積），<b>「下次有雨」與「雷」是預報</b>（3 小時一格）；
-      「雷　特報中」才是官方認定該地區正在打雷。點站臺名稱看那一站的完整預報。
-      ${anyThunder ? '' : ''}</p>
-  </div>`;
+        thN ? `${thN} 站有雷` : wetN ? `${wetN} 站正在下雨` : '全部站臺目前都沒有下雨'}</b>
+      <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">　共 ${list.length} 站</span>
+      <div class="hint" style="margin-top:0.25rem">有狀況的排在前面。點一張卡看那一站的完整預報。<br>
+        「正在下雨」是雨量站<b>實測</b>（10 分鐘累積）；其餘是<b>預報</b>，
+        官方最細<b>一格 3 小時</b>，本程式不做內插。</div>
+    </div>`
+    + sorted.map(card).join('');
 }
 
-/* ── 單一地點的完整預報 ───────────────────────────────── */
+/* ── 單一地點 ─────────────────────────────────────────── */
 function wxDetail(st) {
   const rn = nowRain(st);
   const zone = thunderFor(st);
+  const tf = townFor(st);
+  const ser = tf ? townSeries(tf.town).filter(x => x.to > Date.now()) : [];
+  const cur = ser[0] || null;
+
   const where = wxWhere(st, st.geo ? 'GPS 定位' : (countyOf(st) || ''));
 
-  const nowLine = rn
-    ? `<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">
-        <b style="font-size:1.0625rem;color:${rn.raining ? 'var(--acc)' : 'var(--fg2)'}">${
-          rn.raining ? '正在下雨' : '目前沒有下雨'}</b>
-        <span class="mono" style="font-size:0.75rem;color:var(--fg3)">
-          10 分鐘 ${rn.m10 == null ? '—' : rn.m10} mm　時雨 ${rn.h1 == null ? '—' : rn.h1} mm　
-          24 小時 ${rn.h24 == null ? '—' : Math.round(rn.h24)} mm</span>
-        <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">
-          實測　${esc(rn.name)} ${rn.km} km</span></div>`
-    : '<div style="color:var(--fg4)">附近沒有可用的雨量站，無法判斷現在有沒有下雨。</div>';
+  // ── 大字現況 ──
+  const hero = `<div class="card pad wxhero" style="margin-bottom:0.5rem">
+    <div class="wh-top">
+      <span class="wh-i">${cur ? wxIcon(cur.wx, cur.from) : '—'}</span>
+      <span class="wh-m">
+        <b class="wh-v" style="color:${rn && rn.raining ? 'var(--acc)' : 'var(--fg)'}">${
+          rn ? (rn.raining ? '正在下雨' : '目前沒有下雨') : '無雨量站可判斷'}</b>
+        <span class="wh-s">${cur ? esc(cur.wx || '') : ''}${
+          cur && cur.t != null ? `　${cur.t}°` : ''}${
+          cur && cur.pop != null ? `　降雨機率 ${cur.pop}%` : ''}</span>
+      </span></div>
+    ${rn ? `<div class="mono wh-r">10 分鐘 ${rn.m10 == null ? '—' : rn.m10} mm　
+      時雨 ${rn.h1 == null ? '—' : rn.h1} mm　24 小時 ${rn.h24 == null ? '—' : Math.round(rn.h24)} mm
+      <span style="color:var(--fg4)">　實測 ${esc(rn.name)} ${rn.km} km</span></div>` : ''}
+    ${zone ? `<div class="msg e" style="margin:0.5rem 0 0"><b>這一站在「${esc(zone.kind)}」範圍內</b>
+      （${esc(zone.area)}${zone.end ? `，至 ${fmtShort(zone.end)}` : ''}）。
+      依單位規定，雷雨期間應關閉站臺設備。</div>` : ''}
+  </div>`;
 
-  const zoneLine = zone
-    ? `<div class="msg e" style="margin:0.5rem 0 0"><b>這一站在「${esc(zone.kind)}」範圍內</b>
-       （${esc(zone.area)}${zone.end ? `，至 ${fmtShort(zone.end)}` : ''}）。
-       依單位規定，雷雨期間應關閉站臺設備。</div>` : '';
-
-  const tf = townFor(st);
   if (!tf) {
-    return where + `<div class="card pad" style="margin-bottom:0.75rem">${nowLine}${zoneLine}
-      <div class="msg ${WX_ERR ? 'e' : 'i'}" style="margin:0.625rem 0 0">${
-        WX_ERR ? `預報取得失敗：${esc(WX_ERR)}。資料集代號可在設定「天氣預報來源」修改。`
-        : '尚未取得鄉鎮天氣預報。按颱風頁上方「更新」，或到設定確認授權碼與「天氣預報來源」。'}</div></div>`;
+    return where + hero + `<div class="msg ${WX_ERR ? 'e' : 'i'}">${
+      WX_ERR ? `預報取得失敗：${esc(WX_ERR)}。資料集代號可在設定「天氣預報來源」修改。`
+      : '尚未取得鄉鎮天氣預報。按颱風頁上方「更新」，或到設定確認授權碼與「天氣預報來源」。'}</div>`;
   }
 
-  const ser = townSeries(tf.town).filter(x => x.to > Date.now());
-  const h48 = ser.filter(x => x.from < Date.now() + 48 * 3600000);
-  const later = ser.filter(x => x.from >= Date.now() + 48 * 3600000);
+  // ── 一句話：接下來會怎樣 ──
+  const wet = ser.find(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
+  const lead = wet
+    ? (wet === ser[0]
+      ? '<b style="color:var(--acc)">目前時段預報有雨</b>'
+      : `<b style="color:var(--acc)">${relDay(wet.from)}${fmtClock(wet.from)}</b> 起預報有雨`)
+    : '<span style="color:var(--ok)">未來預報時段內都沒有明顯降雨</span>';
 
+  // ── 橫向逐 3 小時 ──
+  const soon = ser.filter(x => x.from < Date.now() + 30 * 3600000);
+  const strip = soon.length ? `<div class="wxstrip">${soon.map(x => {
+    const th = isThunder(x.wx), rain = isRainy(x.wx);
+    return `<div class="ws-c${th ? ' hot' : rain ? ' wet' : ''}">
+      <span class="ws-d">${relDay(x.from)}</span>
+      <span class="ws-t mono">${fmtClock(x.from)}</span>
+      <span class="ws-i">${wxIcon(x.wx, x.from)}</span>
+      <span class="ws-w">${esc(x.wx || '—')}</span>
+      <span class="ws-p mono" style="color:${x.pop == null ? 'var(--fg4)'
+        : x.pop >= 70 ? 'var(--no)' : x.pop >= 30 ? 'var(--sb)' : 'var(--fg3)'}">${
+        x.pop == null ? '—' : x.pop + '%'}</span>
+      <span class="ws-g mono">${x.t == null ? '' : x.t + '°'}</span>
+      <span class="ws-b mono">${slotBf(x) == null ? '' : slotBf(x) + ' 級'}</span>
+    </div>`;
+  }).join('')}</div>` : '<div class="msg i">預報時段都已過去，請按上方「更新」。</div>';
+
+  // ── 逐日 ──
+  const days = townDays(ser);
+  const tMin = Math.min(...days.map(d => d.lo).filter(Number.isFinite));
+  const tMax = Math.max(...days.map(d => d.hi).filter(Number.isFinite));
+  const span = (tMax - tMin) || 1;
+  const dayRow = d => {
+    const l = Number.isFinite(d.lo) ? d.lo : null, h = Number.isFinite(d.hi) ? d.hi : null;
+    const left = l == null ? 0 : ((l - tMin) / span) * 100;
+    const w = (l == null || h == null) ? 0 : Math.max(4, ((h - l) / span) * 100);
+    return `<div class="wxday">
+      <span class="wd-n">${sameDay(d.at, Date.now()) ? '今天' : `${WK_CH[new Date(d.at).getDay()]}`}
+        <span class="mono" style="color:var(--fg4);font-size:0.6875rem">${
+          new Date(d.at).getMonth() + 1}/${new Date(d.at).getDate()}</span></span>
+      <span class="wd-i">${wxIcon(d.wx, d.at + 12 * 3600000)}</span>
+      <span class="wd-p mono" style="color:${d.pop == null ? 'var(--fg4)'
+        : d.pop >= 70 ? 'var(--no)' : d.pop >= 30 ? 'var(--sb)' : 'var(--fg3)'}">${
+        d.pop == null ? '' : d.pop + '%'}</span>
+      ${(l == null && h == null)
+        ? '<span class="wd-none">無溫度資料</span>'
+        : `<span class="wd-lo mono">${l == null ? '' : l + '°'}</span>
+           <span class="wd-bar"><i style="left:${left}%;width:${w}%"></i></span>
+           <span class="wd-hi mono">${h == null ? '' : h + '°'}</span>`}
+    </div>`;
+  };
+
+  // ── 完整數字表（收起來）──
   const cell = x => {
     const rain = isRainy(x.wx), th = isThunder(x.wx);
     const popCol = x.pop == null ? 'var(--fg4)' : x.pop >= 70 ? 'var(--no)' : x.pop >= 30 ? 'var(--sb)' : 'var(--fg3)';
@@ -3889,43 +4122,29 @@ function wxDetail(st) {
         x.pop == null ? '—' : x.pop + '%'}</td>
       <td class="mono" style="text-align:right">${x.t == null ? '—' : x.t + '°'}</td>
       <td class="mono" style="text-align:right;color:var(--fg3)">${
-        x.ws == null ? '—' : bfLabel(ms2bf(x.ws))}</td></tr>`;
+        slotBf(x) == null ? '—' : bfLabel(slotBf(x))}</td></tr>`;
   };
 
-  const table = rows => `<div style="overflow-x:auto"><table class="impact wx">
-    <colgroup><col class="c-t"><col><col style="width:2.9rem"><col style="width:2.6rem">
-      <col style="width:2.9rem"></colgroup>
-    <tr><th>時段</th><th>天氣</th><th>降雨</th><th>溫度</th><th>風</th></tr>
-    ${rows.map(cell).join('')}</table></div>`;
-
-  const soon = h48.filter(x => x.from < Date.now() + 24 * 3600000);
-  const rest = h48.filter(x => x.from >= Date.now() + 24 * 3600000);
-
-  const firstRain = ser.find(x => isRainy(x.wx) || (x.pop != null && x.pop >= 70));
-  const lead = firstRain
-    ? (isRainy(ser[0] && ser[0].wx) || (ser[0] && ser[0].pop >= 70)
-      ? `<b style="color:var(--acc)">目前時段預報有雨</b>`
-      : `<b style="color:var(--acc)">${relDay(firstRain.from)}${fmtClock(firstRain.from)}</b> 起預報有雨`)
-    : '<span style="color:var(--ok)">未來預報時段內都沒有明顯降雨</span>';
-
-  return where + `<div class="card pad" style="margin-bottom:0.75rem">
-    ${nowLine}${zoneLine}
-    <div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid var(--edge)">
+  return where + hero + `<div class="card pad" style="margin-bottom:0.75rem">
+    <div style="margin-bottom:0.5rem">
       <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">預報</span>
       ${lead}
       <span class="mono" style="font-size:0.6875rem;color:var(--fg4)">
         　${esc(tf.town.name)}${tf.km != null ? `（${tf.km} km）` : `（依${tf.by}對應）`}</span></div>
-    ${soon.length ? table(soon) : '<div class="msg i" style="margin:0.5rem 0 0">預報時段都已過去，請按上方「更新」。</div>'}
-    ${rest.length ? `<details style="margin-top:0.375rem">
+    ${strip}
+    <div class="hint" style="margin-top:0.375rem">
+      橫向捲動看更遠的時段。<b>一格是 3 小時</b>——官方最細就是這樣，本程式不做內插。</div>
+    ${days.length ? `<div class="sec2">逐日</div>${days.map(dayRow).join('')}` : ''}
+    <details style="margin-top:0.5rem">
       <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
-        24–48 小時（${rest.length} 個時段）</summary>${table(rest)}</details>` : ''}
-    ${later.length ? `<details style="margin-top:0.25rem">
-      <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
-        第 3 天以後（${later.length} 個時段，12 小時一格）</summary>${table(later)}</details>` : ''}
+        完整數字表（${ser.length} 個時段）</summary>
+      <div style="overflow-x:auto"><table class="impact wx">
+        <colgroup><col class="c-t"><col><col style="width:2.9rem"><col style="width:2.6rem">
+          <col style="width:2.9rem"></colgroup>
+        <tr><th>時段</th><th>天氣</th><th>降雨</th><th>溫度</th><th>風</th></tr>
+        ${ser.map(cell).join('')}</table></div></details>
     <p class="hint" style="margin-top:0.5rem">
       <b>「正在下雨」是雨量站的實測</b>（10 分鐘累積），不是預報。
-      下方是中央氣象署鄉鎮天氣預報，<b>最細就是 3 小時一格</b>——
-      官方沒有逐時降雨預報，把 3 小時內插成 1 小時只是把猜的講得比較細，這裡不做。
       要看「等一下會不會下」請用<b>實況頁的雷達回波</b>，那才是臨近預報該看的東西。
       ${WX_ERR ? `<br><b style="color:var(--no)">部分預報取得失敗：${esc(WX_ERR)}</b>` : ''}</p>
   </div>`;
