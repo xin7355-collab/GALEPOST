@@ -148,7 +148,43 @@ def parse_json(raw):
     return "", out
 
 
+# 內容沒變時，最多每小時刷新一次時間戳
+REFRESH_SEC = 55 * 60
+
+
 def write(obj):
+    """只有**內容**變了才真的寫檔。
+
+    `updated` 每一次執行都會變，所以不能拿整個檔案去比對有沒有變動——
+    那樣工作流程會每十分鐘 commit 一次（一天 144 次），而每一次 commit
+    都會觸發一輪 GitHub Pages 重新部署。沒有雷的日子不該產生任何提交。
+
+    但也不能永遠不更新時間戳：前端是用 `updated` 算資料年齡的，
+    一直不動的話「現在沒有落雷」會被當成很舊的資料而被丟掉。
+    折衷是內容沒變時**每小時**才刷新一次。
+    """
+    prev = None
+    try:
+        with open(OUT, encoding="utf-8") as f:
+            prev = json.load(f)
+    except (OSError, ValueError):
+        prev = None
+
+    if isinstance(prev, dict):
+        a, b = dict(obj), dict(prev)
+        a.pop("updated", None)
+        b.pop("updated", None)
+        if a == b:
+            age = REFRESH_SEC + 1
+            try:
+                age = (datetime.now(TW)
+                       - datetime.fromisoformat(prev.get("updated", ""))).total_seconds()
+            except (TypeError, ValueError):
+                pass
+            if age < REFRESH_SEC:
+                print(f"unchanged ({int(age)}s old) — leaving file alone, no commit")
+                return
+
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
