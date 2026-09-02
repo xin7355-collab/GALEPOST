@@ -385,6 +385,11 @@ main.peek-back{transition:transform .22s cubic-bezier(.2,.9,.3,1)}
   background:linear-gradient(90deg,var(--sb),var(--wt,#EFAA35))}
 /* 沒有溫度資料就直說,不要留一條空的灰軌 —— 那看起來像壞掉。 */
 .wxday .wd-none{flex:1;text-align:right;font-size:0.6875rem;color:var(--fg4)}
+/* 延伸預報（非氣象署）壓暗並掛一個標籤 —— 它跟官方資料放在同一張表裡,
+   不區分就會被當成官方的。 */
+.wxday.ext{opacity:.72}
+.wxday .wd-x{flex:0 0 auto;font-size:0.5625rem;font-family:var(--mono);
+  color:var(--sb);border:1px solid var(--sb);border-radius:0.1875rem;padding:0 0.1875rem}
 
 /* 總表裡的站臺名稱可以按進去看細節。做成連結的樣子而不是按鈕 ——
    一整欄的按鈕框會把表格擠爆。 */
@@ -793,6 +798,15 @@ const WX_WK_DEFAULT = 'F-D0047-091';    // 臺灣各鄉鎮未來 1 週天氣預�
    對站臺設備真正有威脅的是**雲對地**。 */
 const LTN_DEFAULT = 'O-A0039-001';
 
+/* 延伸預報（非氣象署）的預設端點。放在這裡是因為 blankDB() 會用到 —— 常數晚一步就是 TDZ。
+   {LAT}/{LNG}/{DAYS} 會被代換。Open-Meteo 免金鑰、有 CORS,所以瀏覽器直連得到;
+   但**我在這個開發環境連不出去,沒辦法驗證回應形狀**,所以網址做成可改、
+   失敗時把原因寫在畫面上。 */
+const EXT_URL_DEFAULT = 'https://api.open-meteo.com/v1/forecast'
+  + '?latitude={LAT}&longitude={LNG}'
+  + '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'
+  + '&timezone=Asia%2FTaipei&forecast_days={DAYS}';
+
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const p2 = n => String(n).padStart(2, '0');
@@ -832,6 +846,12 @@ function blankDB() {
       wxLoc: '',
       // 閃電：資料集代號與「幾公里內算數」。留空 = 不抓。
       ltnSet: LTN_DEFAULT, ltnKm: 15, ltnUrl: '', ltnProxy: '',
+      // 其他鄉鎮預報資料集（一行一個）。留空就只用上面那兩支。
+      wxMore: '',
+      /* 延伸預報（非氣象署）。預設關閉 —— 它要把站臺座標送到第三方,
+         而這支程式在「關於」裡寫著「不會自動上傳到任何地方」。
+         要開就要使用者自己開,而且畫面上一定標明不是官方資料。 */
+      extOn: false, extUrl: EXT_URL_DEFAULT, extDays: 16,
     },
     /* ctl：本次管制期間。start=0 代表還沒開始管制。
        沒有這個概念的話,站臺的 at（「從什麼時候開始是這個狀態」）會被當成
@@ -1209,7 +1229,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v41';
+const APP_VER = 'v42';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -1778,16 +1798,115 @@ function townDays(ser) {
   return [...by.values()].sort((a, b) => a.at - b.at);
 }
 
+/* ── 延伸預報（非氣象署）─────────────────────────────────
+   使用者要「預估最久的天氣，準確度其次」。
+
+   **官方逐日資料最長就是 1 週**（F-D0047-091）。我在這個環境查不到
+   氣象署有沒有更長的逐日產品,**所以我不會憑空塞一個代號進來** ——
+   那正是抓 W-C0034-003 的錯法。想加的話,設定裡的「其他資料集」
+   貼進去就能用（合併規則本來就是照時間接續）。
+
+   要更久,只能換一個來源。這裡接的是 Open-Meteo：免金鑰、有 CORS、
+   逐日最長 16 天。但它**不是中央氣象署**,所以:
+   ① 預設關閉 —— 它要把站臺座標送到第三方,而這支程式在「關於」裡
+      寫著「不會自動上傳到任何地方」。要開就要使用者自己開。
+   ② 畫面上一律標「延伸」與來源,不跟官方資料混在一起。
+   ③ **不參與任何判斷** —— 雷雨、停班停課、關機時機一律只看官方資料。
+      準確度其次是使用者對「看一眼」的要求,不是對「決定關機」的要求。 */
+let EXT = null, EXT_AT = 0, EXT_ERR = '', EXT_KEY = '';
+
+/* WMO weather code → 中文與嚴重度。對不到就留空,不硬掰。 */
+const WMO = {
+  0: '晴', 1: '晴時多雲', 2: '多雲', 3: '陰',
+  45: '霧', 48: '霧淞',
+  51: '毛毛雨', 53: '毛毛雨', 55: '毛毛雨',
+  56: '凍毛雨', 57: '凍毛雨',
+  61: '小雨', 63: '雨', 65: '大雨',
+  66: '凍雨', 67: '凍雨',
+  71: '小雪', 73: '雪', 75: '大雪', 77: '霰',
+  80: '陣雨', 81: '陣雨', 82: '強陣雨',
+  85: '陣雪', 86: '強陣雪',
+  95: '雷雨', 96: '雷雨帶冰雹', 99: '強雷雨帶冰雹',
+};
+
+// 網址是可改的,所以主機名稱要從網址讀,不要寫死一個名字騙人
+function extHost() {
+  try { return new URL((DB.cfg.extUrl || EXT_URL_DEFAULT).replace(/\{[A-Z]+\}/g, '0')).host; }
+  catch (e) { return '第三方來源'; }
+}
+
+async function fetchExtended(site) {
+  if (!DB.cfg.extOn) { EXT = null; EXT_ERR = ''; EXT_KEY = ''; return; }
+  if (!site || !Number.isFinite(site.lat) || !Number.isFinite(site.lng)) {
+    EXT = null; EXT_ERR = ''; EXT_KEY = ''; return;
+  }
+  const days = clamp(+DB.cfg.extDays || 16, 1, 16);
+  const key = `${site.lat.toFixed(3)},${site.lng.toFixed(3)},${days}`;
+  // 同一個地點十分鐘內不重抓 —— 切分頁不該一直打第三方
+  if (EXT_KEY === key && Date.now() - EXT_AT < 10 * 60000) return;
+  const url = (DB.cfg.extUrl || EXT_URL_DEFAULT)
+    .replace(/\{LAT\}/g, String(site.lat))
+    .replace(/\{LNG\}/g, String(site.lng))
+    .replace(/\{DAYS\}/g, String(days));
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    const d = j && (j.daily || j.Daily);
+    const t = d && (d.time || d.Time);
+    if (!Array.isArray(t) || !t.length) throw new Error('回應裡沒有逐日資料');
+    const code = d.weather_code || d.weathercode || [];
+    const hi = d.temperature_2m_max || [];
+    const lo = d.temperature_2m_min || [];
+    const pop = d.precipitation_probability_max || [];
+    /* 日期一律當成**行事曆上的那一天**,轉成裝置本地的午夜。
+       官方那邊 townDays() 也是照裝置本地日期分組的 —— 兩邊用不同的
+       時區基準,在非臺灣時區的裝置上就會差一天（會冒出一列「昨天」）。 */
+    const today0 = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+    EXT = t.map((day, i) => {
+      const c = Number(code[i]);
+      const m = String(day).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      const at = m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : wxTime(day);
+      return {
+        at, wx: WMO[c] || '', code: c,
+        hi: wxNum(hi[i]), lo: wxNum(lo[i]), pop: wxNum(pop[i]),
+        ext: true,
+      };
+    }).filter(x => Number.isFinite(x.at) && x.at >= today0);
+    EXT_AT = Date.now(); EXT_ERR = ''; EXT_KEY = key;
+  } catch (e) {
+    EXT = null; EXT_ERR = (e && e.message) || String(e); EXT_KEY = '';
+  }
+}
+
+/* 官方的逐日在前,延伸的只補**官方沒有的那幾天**。
+   同一天兩邊都有時一律以官方為準 —— 不是因為它比較準,
+   是因為畫面上其他地方講的都是官方,混用會前後矛盾。 */
+function mergeDays(official) {
+  const key = ts => { const d = new Date(ts);
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+  const have = new Set(official.map(d => key(d.at)));
+  const extra = (EXT || []).filter(d => !have.has(key(d.at)))
+    .map(d => ({ key: key(d.at), at: d.at, lo: d.lo, hi: d.hi, pop: d.pop,
+      wx: d.wx, sev: wxSev(d.wx), thunder: isThunder(d.wx), ext: true }));
+  return official.concat(extra).sort((a, b) => a.at - b.at);
+}
+
 /* 一格的風級。官方若直接給了風級（Beaufort）就用官方的 ——
    自己拿 m/s 換算會跟官方的數字不一致,而值班看的是同一份預報。 */
 const slotBf = x => Number.isFinite(x.bf) ? Math.round(x.bf)
   : (Number.isFinite(x.ws) ? ms2bf(x.ws) : null);
 
 async function fetchForecast(key) {
+  /* 資料集清單做成可以再加。使用者若找到更長的官方產品,貼進設定的
+     「其他資料集」就能用,不必等我改版 —— 而我在這個環境查不到、
+     也不該憑空塞一個代號進來（抓 W-C0034-003 就是那樣來的）。
+     合併規則本來就是「照時間接續」,多幾支不會互相打架。 */
   const ids = [
     (DB.cfg.wx3h === undefined ? WX_3H_DEFAULT : DB.cfg.wx3h) || '',
     (DB.cfg.wxWk === undefined ? WX_WK_DEFAULT : DB.cfg.wxWk) || '',
-  ].filter(Boolean);
+    ...String(DB.cfg.wxMore || '').split(/[\s,、;；]+/),
+  ].map(x => String(x).trim()).filter(Boolean);
   if (!ids.length) { WX = null; WX_ERR = ''; return; }
   const errs = [];
   const towns = new Map();
@@ -3669,6 +3788,15 @@ function locateMe() {
 function setWxLoc(v) {
   if (v === WXLOC_GEO && !GEO) { locateMe(); return; }   // 選了就順手定位一次
   DB.cfg.wxLoc = v; save(); renderTyphoon({});
+  refreshExtended();
+}
+
+/* 延伸預報是逐點的（一個座標一份）,所以在**看單站的時候**才抓,
+   而不是跟著颱風資料一起抓 —— 十九個站各抓一次是沒有意義的請求量。 */
+function refreshExtended() {
+  const st = wxSite();
+  if (!DB.cfg.extOn || !st || !Number.isFinite(st.lat)) return;
+  fetchExtended(st).then(() => renderTyphoon({}));
 }
 
 /* ── 地點選擇 ────────────────────────────────────────────
@@ -3744,7 +3872,7 @@ function setWxMode(m) {
   if (!list.length) return;
   const cur = DB.cfg.wxLoc || '';
   if (!cur || cur === WXMODE_GEO || !list.some(x => x.id === cur)) DB.cfg.wxLoc = list[0].id;
-  save(); renderTyphoon({});
+  save(); renderTyphoon({}); refreshExtended();
 }
 
 function nowRain(st) {
@@ -4262,8 +4390,8 @@ function wxDetail(st) {
     </div>`;
   }).join('')}</div>` : '<div class="msg i">預報時段都已過去，請按上方「更新」。</div>';
 
-  // ── 逐日 ──
-  const days = townDays(ser);
+  // ── 逐日（官方 + 延伸）──
+  const days = mergeDays(townDays(ser));
   const tMin = Math.min(...days.map(d => d.lo).filter(Number.isFinite));
   const tMax = Math.max(...days.map(d => d.hi).filter(Number.isFinite));
   const span = (tMax - tMin) || 1;
@@ -4271,11 +4399,12 @@ function wxDetail(st) {
     const l = Number.isFinite(d.lo) ? d.lo : null, h = Number.isFinite(d.hi) ? d.hi : null;
     const left = l == null ? 0 : ((l - tMin) / span) * 100;
     const w = (l == null || h == null) ? 0 : Math.max(4, ((h - l) / span) * 100);
-    return `<div class="wxday">
+    return `<div class="wxday${d.ext ? ' ext' : ''}">
       <span class="wd-n">${sameDay(d.at, Date.now()) ? '今天' : `${WK_CH[new Date(d.at).getDay()]}`}
         <span class="mono" style="color:var(--fg4);font-size:0.6875rem">${
           new Date(d.at).getMonth() + 1}/${new Date(d.at).getDate()}</span></span>
       <span class="wd-i">${wxIcon(d.wx, d.at + 12 * 3600000)}</span>
+      ${d.ext ? '<span class="wd-x">延伸</span>' : ''}
       <span class="wd-p mono" style="color:${d.pop == null ? 'var(--fg4)'
         : d.pop >= 70 ? 'var(--no)' : d.pop >= 30 ? 'var(--sb)' : 'var(--fg3)'}">${
         d.pop == null ? '' : d.pop + '%'}</span>
@@ -4311,7 +4440,23 @@ function wxDetail(st) {
     ${strip}
     <div class="hint" style="margin-top:0.375rem">
       橫向捲動看更遠的時段。<b>一格是 3 小時</b>——官方最細就是這樣，本程式不做內插。</div>
-    ${days.length ? `<div class="sec2">逐日</div>${days.map(dayRow).join('')}` : ''}
+    ${days.length ? `<div class="sec2">逐日　${
+      days.filter(d => !d.ext).length} 天官方${
+      days.some(d => d.ext) ? ` ＋ ${days.filter(d => d.ext).length} 天延伸` : ''}</div>`
+      + days.map(dayRow).join('')
+      + (days.some(d => d.ext)
+        ? `<div class="hint" style="margin-top:0.375rem">
+            標「延伸」的<b>不是中央氣象署的資料</b>，來自${esc(extHost())}，
+            只是為了看得更遠——<b>準確度比官方低</b>，而且
+            <b>不參與雷雨、停班停課、關機時機的任何判斷</b>。</div>`
+        : (DB.cfg.extOn && EXT_ERR
+          ? `<div class="msg w" style="margin:0.375rem 0 0">延伸預報取得失敗：${esc(EXT_ERR)}。
+              可在設定「延伸預報」關掉或改網址。</div>`
+          : (!DB.cfg.extOn
+            ? `<div class="hint" style="margin-top:0.375rem">
+                官方逐日最長就是 1 週。要看更遠可到設定開啟<b>延伸預報</b>（非氣象署，最長 16 天）。</div>`
+            : '')))
+      : ''}
     <details style="margin-top:0.5rem">
       <summary style="cursor:pointer;font-size:0.8125rem;color:var(--acc);padding:0.25rem 0">
         完整數字表（${ser.length} 個時段）</summary>
@@ -6046,6 +6191,36 @@ function renderSettings() {
     </div>
   </div>
 
+  <div class="sec"><h2>延伸預報（非氣象署）</h2></div>
+  <div class="card pad" style="margin-bottom:1.125rem">
+    <div class="sw"><div class="sw-t"><b>開啟延伸預報</b>
+      <small>${c.extOn ? `已開啟，最長 ${clamp(+c.extDays || 16, 1, 16)} 天`
+        : '關閉。官方逐日最長 1 週'}</small></div>
+      <button class="tgl" id="c_extOn" aria-pressed="${!!c.extOn}"></button></div>
+    <label class="fld" style="margin:0.875rem 0 0.5rem"><span class="lb">天數</span>
+      <input type="number" id="c_extDays" min="1" max="16" step="1"
+        value="${clamp(+c.extDays || 16, 1, 16)}"></label>
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">來源網址</span>
+      <input type="text" id="c_extUrl" value="${esc(c.extUrl || EXT_URL_DEFAULT)}"
+        autocomplete="off" spellcheck="false">
+      <span class="sub">{LAT}／{LNG}／{DAYS} 會被代換。</span></label>
+    <div class="msg w" style="margin:0 0 0.5rem">
+      <b>開啟前請先知道兩件事：</b><br>
+      ① 這<b>不是中央氣象署的資料</b>。準確度比官方低，而且
+      <b>不參與雷雨、停班停課、關機時機的任何判斷</b>——那些一律只看官方。
+      逐日表上會標「延伸」並壓暗。<br>
+      ② 它要把<b>你目前看的那個站臺的經緯度</b>送到
+      <code>${esc(extHost())}</code>（第三方，在國外）。這支程式其他地方
+      <b>不會自動上傳任何東西</b>，這一項是唯一的例外，所以<b>預設關閉</b>，
+      要開必須你自己開。
+    </div>
+    <p class="hint">只在你<b>看單一站臺的天氣</b>時才抓（同一個地點 10 分鐘內不重抓），
+      不會十九個站各抓一次。抓不到時逐日表下方會寫出原因。<br>
+      <b>我在這個開發環境連不到這個來源，沒辦法驗證它的回應形狀。</b>
+      所以網址做成可改、失敗時把原因寫出來——跟氣象署那幾支是同一個原則。</p>
+    <div class="btnrow"><button class="btn sm" onclick="refreshExtended()">立即取得</button></div>
+  </div>
+
   <div class="sec"><h2>閃電（落雷）</h2></div>
   <div class="card pad" style="margin-bottom:1.125rem">
     <label class="fld" style="margin-bottom:0.5rem"><span class="lb">資料集代號</span>
@@ -6131,7 +6306,14 @@ function renderSettings() {
     <label class="fld" style="margin-bottom:0.5rem"><span class="lb">未來 1 週資料集代號</span>
       <input type="text" id="c_wxWk" value="${esc(c.wxWk === undefined ? WX_WK_DEFAULT : (c.wxWk || ''))}"
         placeholder="留空則不抓這一支" autocomplete="off" spellcheck="false"></label>
-    <span class="sub">兩支都走上面那把<b>中央氣象署授權碼</b>。
+    <label class="fld" style="margin-bottom:0.5rem"><span class="lb">其他資料集（選填，一行一個）</span>
+      <textarea id="c_wxMore" rows="2" spellcheck="false"
+        style="font-family:var(--mono);font-size:0.75rem"
+        placeholder="還有別的鄉鎮預報資料集就貼在這裡">${esc(c.wxMore || '')}</textarea>
+      <span class="sub">會照時間<b>接續</b>合併到上面兩支後面。
+        <b>官方逐日最長就是 1 週</b>——若你找到更長的官方產品，貼進來就能用，不必等改版。
+        我在開發環境查不到有沒有，<b>所以不會憑空預設一個代號進去</b>。</span></label>
+    <span class="sub">前兩支都走上面那把<b>中央氣象署授權碼</b>。
       <b>最細就是 3 小時一格</b>，官方沒有逐小時的降雨預報，所以本程式不做內插——
       把 3 小時的「天氣現象」硬切成 1 小時就是編造。
       要看更近的降雨，請用實況頁的雷達回波。
@@ -6334,6 +6516,9 @@ function renderSettings() {
   bind('#c_ltnKm', e => { c.ltnKm = clamp(+e.target.value || 15, 1, 100); save(); renderTyphoon({}); });
   bind('#c_ltnUrl', e => { c.ltnUrl = e.target.value.trim(); save(); });
   bind('#c_ltnProxy', e => { c.ltnProxy = e.target.value.trim(); save(); });
+  bind('#c_wxMore', e => { c.wxMore = e.target.value; save(); });
+  bind('#c_extDays', e => { c.extDays = clamp(+e.target.value || 16, 1, 16); save(); EXT_KEY = ''; });
+  bind('#c_extUrl', e => { c.extUrl = e.target.value.trim(); save(); EXT_KEY = ''; });
   const lb = $('#c_ltnFileBtn');
   if (lb) lb.onclick = () => $('#c_ltnFile').click();
   const lf = $('#c_ltnFile');
@@ -6347,6 +6532,11 @@ function renderSettings() {
   bind('#c_lock', e => { c.lockMin = +e.target.value; save(); });
   bindToggle('#c_auto', () => c.auto, v => { c.auto = v; save(); setAuto(v); });
   bindToggle('#c_expc', () => c.exportCoords, v => { c.exportCoords = v; save(); });
+  bindToggle('#c_extOn', () => c.extOn, v => {
+    c.extOn = v; save();
+    if (!v) { EXT = null; EXT_ERR = ''; EXT_KEY = ''; }
+    renderSettings(); refreshExtended(); renderTyphoon({});
+  });
   bind('#c_scope', e => { expScope = e.target.value; });
   {
     /* 產生目前範圍的備份文字。複製失敗（權限、非安全內容）時
@@ -7105,12 +7295,14 @@ function goTySub(k) {
   }
   // Windy 的 iframe 到真的切到實況頁才建立,不然一開 app 就吃掉幾 MB。
   if (k === 'live') renderWindyIfReady();
+  if (k === 'wx') refreshExtended();
 }
 
 let _windyReady = null;
 function renderWindyIfReady() { if (_windyReady) _windyReady(); }
 
 window.setWxLoc = setWxLoc; window.locateMe = locateMe; window.setWxMode = setWxMode;
+window.refreshExtended = refreshExtended;
 window.importLightningFile = importLightningFile;
 window.exportInvite = exportInvite; window.exportSyncPack = exportSyncPack;
 window.unbindPeer = unbindPeer; window.rebindPeer = rebindPeer;
