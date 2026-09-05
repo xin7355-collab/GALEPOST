@@ -1,1 +1,1 @@
-{"hasKey":false,"updated":"2026-09-06T05:23:46+08:00","strikes":[],"note":"repo 尚未設定 CWA_API_KEY Secret，後端管線未啟用；前端讀到 hasKey:false 會自動略過。"}
+{"hasKey":false,"updated":"2026-09-06T07:01:10+08:00","strikes":[],"note":"repo 尚未設定 CWA_API_KEY Secret，後端管線未啟用；前端讀到 hasKey:false 會自動略過。"}
