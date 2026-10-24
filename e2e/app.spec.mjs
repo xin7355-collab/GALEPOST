@@ -2219,16 +2219,91 @@ test('站臺所屬單位：編輯填同轄\u5340的另一種寫法存成代表�
   expect(errors).toEqual([]);
 });
 
-test('沒填單位的站依位置推估：40 km 內最近的已知單位站；卡片標「?」、篩選算進去；太遠的不推', async ({ page }) => {
+test('沒填單位的站依位置推估：附近只有一個單位、有把握的直接寫進站臺（不再標問號）；編輯欄帶出目前單位；太遠的不推', async ({ page }) => {
   const S = (id, name, lat, lng, unit = '') => ({ ...NEAR, id, name, lat, lng, unit });
   const errors = await bootWith(page, [S('a', '甲站', 24.0, 120.5, UA), S('b', '乙站', 24.1, 120.55), S('c', '丙站', 25.5, 121.9)]);
   await toEq(page);
-  await expect(page.locator('.st[data-id="b"] .unitlb')).toHaveText(UA + '?');
-  await expect(page.locator('.st[data-id="b"] .unitlb')).toHaveClass(/guess/);
-  await expect(page.locator('.st[data-id="b"] .unitlb')).toHaveAttribute('title', /依 甲站 12 km 推估/);
+  expect(await page.evaluate(() => DB.stations.map(s => [s.id, s.unit || '', s.unitSrc || '']))).toEqual(
+    [['a', UA, ''], ['b', UA, 'geo'], ['c', '', '']]);
+  await expect(page.locator('.st[data-id="b"] .unitlb')).toHaveText(UA);
+  await expect(page.locator('.st[data-id="b"] .unitlb')).not.toHaveClass(/guess/);
   await expect(page.locator('.st[data-id="c"] .unitlb')).toHaveCount(0);
   await expect(page.locator('#uSel option')).toHaveText(['全部單位', '三\u968a／四\u5de1（2）', '未\u5206單位']);
   await page.locator('.st[data-id="b"] [data-edit]').click();
-  await expect(page.locator('#sheet')).toContainText(`依 甲站（12 km）推估是 ${UA}`);
+  await expect(page.locator('#f_unit')).toHaveValue(UA);
+  await expect(page.locator('#sheet')).toContainText('依位置推估（最近已知 甲站 12 km）');
+  expect(errors).toEqual([]);
+});
+
+test('單位邊界：兩個單位差不多近就不替你決定，標「待確認」；只改別的欄位儲存不會把推估寫進去；報告寫的單位蓋過位置推估', async ({ page }) => {
+  const S = (id, name, lat, lng, unit = '') => ({ ...NEAR, id, name, lat, lng, unit });
+  // 甲（UA）、丁（UB）相距約 20 km；戊在中間偏甲（9 km 對 11 km）；乙只靠近甲
+  const errors = await bootWith(page, [S('a', '甲站', 24.0, 120.5, UA), S('d', '丁站', 24.0, 120.7, UB),
+    S('e', '戊站', 24.0, 120.59), S('b', '乙站', 24.0, 120.4)]);
+  await toEq(page);
+  expect(await page.evaluate(() => DB.stations.map(s => s.unit || ''))).toEqual([UA, UB, '', UA]);
+  await expect(page.locator('.st[data-id="e"] .unitlb')).toHaveText(`${UA}／${UB} 待確認`);
+  await page.locator('.st[data-id="e"] [data-edit]').click();
+  await expect(page.locator('#f_unit')).toHaveValue(UA);
+  await expect(page.locator('#sheet')).toContainText('邊界不確定');
+  await page.locator('#f_note').fill('只改備註');
+  await page.locator('#f_save').click();
+  expect(await page.evaluate(() => DB.stations[2].unit || '')).toBe('');      // 沒動單位欄：推估不會被當成確認
+  await page.locator('.st[data-id="e"] [data-edit]').click();
+  await page.locator('#f_unit').fill(UB);
+  await page.locator('#f_save').click();
+  expect(await page.evaluate(() => [DB.stations[2].unit, DB.stations[2].unitSrc])).toEqual([UB, 'manual']);
+  // 乙是位置推估的 UA；報告寫它屬於 UB → 以報告為準，不列「單位不符」
+  expect(await page.evaluate(() => DB.stations[3].unitSrc)).toBe('geo');
+  const r = await pasteReport(page, `${UB}報告\n（一）正常運作（1）：乙站`);
+  expect(await page.evaluate(() => [DB.stations[3].unit, DB.stations[3].unitSrc])).toEqual([UB, 'report']);
+  await expect(page.locator('.chk-card')).not.toContainText('名單上是');       // 不列「單位不符」
+  expect(r.units).toEqual([UB]);
+  expect(errors).toEqual([]);
+});
+
+test('即時告警：山區大雨以上與打雷——戰情頁最上面一行、播報員最上面一張卡、站臺卡標籤，雨與雷分顏色；山區特報不算平地的站', async ({ page }) => {
+  const errors = await bootWith(page, [KEEL], { ty: PLACEHOLDER, ltn: ltnNearKeel(),
+    wx: wxFile({ rain: [['基隆', 25.135, 121.74, 0, 1, 5, 9, 30]] }) });
+  await page.waitForFunction(() => WX_SRC === 'backend' && LTN_AT);
+  await page.evaluate(() => {
+    ADV = [{ kind: '大雷雨', cat: 'thunder', areas: ['基隆市'], end: Date.now() + 3600000 },
+      { kind: '豪雨', cat: 'rain', areas: ['基隆市山區', '新北市'] }, { kind: '大雨', cat: 'rain', areas: ['基隆市'] }];
+    renderTyphoon({}); renderStations();
+  });
+  const bar = page.locator('#tyAlertBar .al-bar');
+  await expect(bar).toContainText('豪雨（含山區）・1 站在大雨以上範圍');
+  await expect(bar).toContainText('⚡ 1 站附近落雷');
+  await bar.click();
+  const card = page.locator('#ty-brief #tyAlert .al-card');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('🌧 豪雨山區：基隆市山區；其他：新北市');
+  await expect(card.locator('.al-r', { hasText: '站臺在大雨範圍' }).locator('.stn')).toHaveText('基隆測試站');   // 平地站：山區豪雨不算，算大雨
+  await expect(card).toContainText('基隆測試站 15 km 內 1 次');
+  await expect(card.locator('.al-r', { hasText: '⚡ 大雷雨' })).toContainText('範圍內站臺：基隆測試站');
+  const cols = await card.locator('.al-r').evaluateAll(rs => rs.map(r => r.style.getPropertyValue('--c')));
+  expect(cols).toEqual(['#EF8A35', '#EFC935', '#EFC935', 'var(--thz)', 'var(--thz)']);
+  await toEq(page);
+  const meta = page.locator('.st[data-id="k1"] .st-m').first();
+  await expect(meta).toContainText('🌧 大雨');
+  await expect(meta).toContainText('⚡ 15 km 內落雷 1 次');
+  // 沒取得資料要講「沒取得」
+  await page.evaluate(() => { ADV = []; WX_SRC = ''; LTN_AT = 0; renderTyphoon({}); });
+  await expect(page.locator('#tyAlert')).toContainText('豪大雨與雷雨特報、落雷實測還沒取得，不能當成沒有');
+  await expect(page.locator('#tyAlertBar .al-bar')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('播報稿：有颱風時開頭加「即時告警」一段；站名、打雷各有自己的顏色', async ({ page }) => {
+  const errors = await bootWith(page, [NEAR]);
+  const r = await page.evaluate(() => {
+    ADV = [{ kind: '豪雨', cat: 'rain', areas: ['臺中市山區'] }];
+    const t = briefText();
+    const h = briefHtml('　站臺在大雨範圍：中心旁測試站。\n　大雷雨特報：基隆市。');
+    return { t, st: (h.match(/class="b-st">([^<]+)/) || [])[1], thz: (h.match(/class="b-thz">([^<]+)/) || [])[1] };
+  });
+  expect(r.t).toContain('\n即時告警\n　豪雨：山區 臺中市山區。');
+  expect(r.st).toBe('中心旁測試站');
+  expect(r.thz).toBe('大雷雨特報');
   expect(errors).toEqual([]);
 });

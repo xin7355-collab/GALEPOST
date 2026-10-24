@@ -37,6 +37,8 @@
   --no:#FF5247; --no-d:rgba(255,82,71,.14);
   --or:#FF8A3D;
   --mag:#E070C8;
+  /* 打雷：雨量色階已經用掉黃、橘、紅、紫紅，雷用電紫，兩種告警一眼分得開 */
+  --thz:#B98CFF; --thz-d:rgba(185,140,255,.14);
   /* 自用監看（不列入回報）的類別自己一個顏色。
      不能沿用開機／待機／關機那三色 —— 那三色講的是管制狀態,
      這裡要講的是「這一臺不在交接名冊上」,是另一件事。 */
@@ -508,12 +510,28 @@ details.more>.hint{margin-top:0.25rem}
 .ask-card .btn{flex:0 0 auto}
 /* 請查明：新增、減少、數量、單位、時間只有截止時間——一項一行,標籤色跟比對結果的「新增／有變／沒出現」同一套 */
 .chk-card{margin-bottom:0.75rem;border-color:rgba(240,166,58,.6)}
+/* 即時告警：一列一件事，左邊色條＝種類（雨的等級色／雷的紫），站臺名用主色青 */
+.al-card{margin-bottom:0.75rem;border-color:rgba(255,82,71,.5)}
+.al-card .al-h{display:flex;align-items:baseline;gap:0.5rem;margin-bottom:0.375rem}
+.al-card .al-h b{font-size:0.9375rem;color:var(--fg)}
+.al-card .al-h small{margin-left:auto;font-size:0.6875rem;color:var(--fg4)}
+.al-r{border-left:4px solid var(--c);padding:0.375rem 0 0.375rem 0.625rem;margin-top:0.375rem;font-size:0.8125rem;line-height:1.6;color:var(--fg2)}
+.al-r>b{color:var(--c);margin-right:0.375rem}
+.al-r em{font-style:normal;font-size:0.6875rem;color:var(--fg4);margin-left:0.25rem}
+.al-none{font-size:0.75rem;color:var(--fg4);margin-top:0.25rem}
+.stn{color:var(--acc);font-weight:700}
+.al-bar{display:flex;flex-wrap:wrap;gap:0.25rem 0.875rem;width:100%;margin:0 0 0.625rem;padding:0.5rem 0.75rem;border-radius:var(--r);
+  border:1px solid rgba(255,82,71,.45);background:var(--no-d);color:var(--fg);font:600 0.8125rem/1.5 var(--sans);text-align:left}
+.al-bar span{white-space:nowrap}
+.al-bar .go{margin-left:auto;color:var(--fg3);font-weight:400}
+.b-st{color:var(--acc);font-weight:700}
+.b-thz{color:var(--thz);font-weight:700}
 .chk-card>b{color:var(--sb);font-size:0.9375rem}
 .chk-card p{margin:0.4375rem 0 0;font-size:0.8125rem;line-height:1.6;color:var(--fg2)}
 .chk-card .btn{margin-top:0.625rem}
 .imp-ex{margin:0.5rem 0 0;padding:0.625rem;border-radius:0.5rem;background:var(--bg2);font:0.75rem/1.6 var(--mono);color:var(--fg3);white-space:pre-wrap;overflow-wrap:anywhere}
 .st-n em.unitlb{color:var(--acc);border-color:rgba(111,211,255,.45)}
-.st-n em.unitlb.guess{border-style:dashed;opacity:.8}
+.st-n em.unitlb.guess{border-style:dashed;color:var(--sb);border-color:rgba(240,166,58,.55)}
 .ok-it{display:block;width:100%;text-align:left;font:inherit;color:inherit;padding:0.4375rem 0;border-top:1px solid var(--edge)}
 .ok-it:first-of-type{margin-top:0.5rem}
 .ok-it:active{background:var(--surf2)}
@@ -1205,6 +1223,8 @@ details.more>.hint{margin-top:0.25rem}
   <div id="tyMsg"></div>
   <!-- 選擇列常駐在頁籤外：切颱風會影響每一個分頁的內容 -->
   <div id="tyPick"></div>
+  <!-- 即時告警的提示條：戰情四個子頁都看得到，按了到播報員看細節（使用者：放在容易看到的地方） -->
+  <div id="tyAlertBar"></div>
   <!-- 「各站」的衝擊表在底部「站臺」的「預判」。播報稿原本搬到「回報」,使用者要它回到總覽旁邊：
        看完總覽緊接著就是要唸的稿子,不必再換到另一個底部分頁。 -->
   <div class="seg tysub" id="tySeg">
@@ -1220,7 +1240,7 @@ details.more>.hint{margin-top:0.25rem}
     <!-- 事件時間軸放最後：前面是「現在要做什麼」,這裡是「整顆颱風的來龍去脈」 -->
     <div id="tyEvt"></div>
   </div>
-  <div class="typane" id="ty-brief"><div id="tyBrief"></div></div>
+  <div class="typane" id="ty-brief"><div id="tyAlert"></div><div id="tyBrief"></div></div>
   <!-- 天氣：雷電（逐站落雷）→ 下雨實測與預報、出門建議。
        Windy 即時影像搬到路徑頁「對焦站臺」右邊的分頁（使用者要求）：天氣頁先看得到出門建議,不用捲過一大塊地圖。 -->
   <div class="typane" id="ty-wx"><div id="tyWx"></div><div id="tyThunder"></div></div>
@@ -1850,7 +1870,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v82';
+const APP_VER = 'v83';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -4151,6 +4171,7 @@ function setGuide(on) {
 }
 
 function renderStations() {
+  applyGeoUnits();
   const box = $('#eqBody');
   if (!DB.stations.length) {
     // 引導卡第一步就是「建立站臺」，有它的時候下面的空白說明不必再放一次同樣的兩顆鈕
@@ -4288,6 +4309,14 @@ function stationCard(s, imp, i, total) {
           + `${dm.official ? '（實際觀測）' : ''}</b>` : ''));
   }
   meta.push(...wxLogTag(s.id));
+  // 告警標籤（使用者：大雨以上、打雷都要告警，顏色分開）：雨用等級色、雷用電紫
+  if (IS_LIVE(s)) {
+    const ar = advRainFor(s);
+    if (ar && ar.mm >= ADV_H24['大雨']) meta.push(`<b style="color:${rainCol(ar.kind)};white-space:nowrap">🌧 ${esc(ar.kind)}${/山區/.test(ar.area) ? '（山區）' : ''}</b>`);
+    const ln = LTN_AT ? strikesNear(s, ltnRadius()) : null, tz = thunderFor(s);
+    if (ln && ln.cg) meta.push(`<b style="color:var(--thz);white-space:nowrap">⚡ ${ltnRadius()} km 內落雷 ${ln.cg} 次</b>`);
+    else if (tz) meta.push(`<b style="color:var(--thz);white-space:nowrap">⚡ ${esc(tz.kind)}範圍</b>`);
+  }
   const aux = !inReport(s);
   return `<article class="st${aux ? ' aux' : ''}" data-id="${s.id}">
     <div class="st-main">
@@ -4295,7 +4324,8 @@ function stationCard(s, imp, i, total) {
       ${wr.bf != null ? bfBadge(wr.bf, 'md') : ''}
       <div class="st-b">
         <div class="st-n"><span class="nm">${esc(s.name)}</span><em>${esc(t.label)}</em>${(u => u.k
-          ? `<em class="unitlb${u.guess ? ' guess' : ''}" title="${esc(unitLabel(u.k))}${u.guess ? `（依 ${esc(u.from)} ${u.km} km 推估）` : ''}">${esc(u.k)}${u.guess ? '?' : ''}</em>` : '')(unitOf(s))}${aux
+          ? `<em class="unitlb${u.guess ? ' guess' : ''}" title="${esc(unitLabel(u.k))}${u.guess ? '：邊界不確定，到編輯確認' : ''}">${esc(u.k)}${
+            u.guess ? `${u.alt ? '／' + esc(u.alt.k) : ''} 待確認` : ''}</em>` : '')(unitOf(s))}${aux
           ? '<em class="auxlb" title="自用監看：不進交接通報、不計入戰力">自用監看</em>' : ''}</div>
         <div class="st-m">${meta.map(x => `<span>${x}</span>`).join('')}</div>
         ${wl.length ? `<div class="st-w">${wl.join('')}${wr.bf != null ? `<span class="wl wtop">待機判斷取最高：${wr.src} ${wr.bf} 級</span>` : ''}</div>` : ''}
@@ -4968,6 +4998,8 @@ function renderTyphoon(o) {
   /* 這兩張各自包起來：任何一張算不出來,只在那一張寫原因——以前丟錯整個 renderTyphoon 停在半路,
      畫面停在上一次的樣子（使用者看到的是「一直定位中、沒反應」）。 */
   safeHtml('#tyThunder', thunderCard, '雷電');
+  safeHtml('#tyAlert', alertCard, '即時告警');
+  safeHtml('#tyAlertBar', alertBar, '告警提示');
   safeHtml('#tyWx', wxCard, '天氣');
   renderDg();                       // 停班停課頁不管有沒有颱風都要更新（推估跟著路徑變）
   renderEnd();                      // 撤除檢核也是：颱風消散、資料拿不到了,檢核還是要做完
@@ -5667,6 +5699,66 @@ function thunderAhead(site) {
   const ser = townSeries(tf.town).filter(x => x.to > Date.now());
   const hit = ser.find(x => isThunder(x.wx));
   return hit ? { from: hit.from, to: hit.to, wx: hit.wx, town: tf.town.name } : null;
+}
+
+/* ── 即時告警（使用者：山區大雨以上、有打雷的地方都要告警；播報員最上面看得到；站臺、雨、雷用顏色分開）──
+   雨：官方豪大雨特報達「大雨」以上，山區與其他地區分開列（山區的雨先斷路、先坍方）；站臺照 advRainFor
+   （「○○縣山區」只算山區的站）。雷：落雷實測（半徑內雲對地）優先，再來是雷雨特報範圍。
+   沒取得資料要講「沒取得」，不能寫成「沒有告警」。 */
+const rainCol = kind => (RAIN_LEVELS.find(x => String(kind).includes(x.name)) || {}).col || 'var(--sb)';
+function alertData() {
+  const live = DB.stations.filter(x => IS_LIVE(x));
+  const R = ltnRadius();
+  const rain = ADV.filter(a => a.cat === 'rain' && advH24(a.kind) >= ADV_H24['大雨'])
+    .map(a => ({ kind: a.kind, end: a.end, col: rainCol(a.kind), hill: a.areas.filter(x => /山區/.test(x)),
+      other: a.areas.filter(x => !/山區/.test(x)) }));
+  const stRain = live.map(s => ({ s, r: advRainFor(s) })).filter(x => x.r && x.r.mm >= ADV_H24['大雨'])
+    .sort((a, b) => b.r.mm - a.r.mm);
+  const stThz = live.map(s => {
+    const n = LTN_AT ? strikesNear(s, R) : null, t = thunderFor(s);
+    return { s, cg: n ? n.cg : 0, near: n && n.cg ? n.nearest : null, adv: t };
+  }).filter(x => x.cg || x.adv).sort((a, b) => b.cg - a.cg);
+  return { rain, stRain, thzAdv: thunderAdv(), stThz, R, n: rain.length + stThz.length + thunderAdv().length };
+}
+const stnList = arr => arr.map(x => `<span class="stn">${esc(x)}</span>`).join('、');
+function alertCard() {
+  const A = alertData(), rows = [];
+  for (const r of A.rain) {
+    rows.push(`<div class="al-r" style="--c:${r.col}"><b>🌧 ${esc(r.kind)}</b>${r.hill.length ? `山區：${esc(r.hill.join('、'))}` : ''}${
+      r.hill.length && r.other.length ? '；' : ''}${r.other.length ? `${r.hill.length ? '其他：' : ''}${esc(r.other.join('、'))}` : ''}${
+      r.end ? `<em>至 ${fmtShort(r.end)}</em>` : ''}</div>`);
+  }
+  if (A.stRain.length) {
+    const by = new Map();
+    A.stRain.forEach(x => { const k = x.r.kind; by.set(k, (by.get(k) || []).concat(x.s.name)); });
+    for (const [k, ns] of by) rows.push(`<div class="al-r" style="--c:${rainCol(k)}"><b>站臺在${esc(k)}範圍</b>${stnList(ns)}</div>`);
+  }
+  const cg = A.stThz.filter(x => x.cg);
+  if (cg.length) rows.push(`<div class="al-r" style="--c:var(--thz)"><b>⚡ 落雷</b>${cg.map(x =>
+    `<span class="stn">${esc(x.s.name)}</span> ${A.R} km 內 ${x.cg} 次（最近 ${x.near.d.toFixed(1)} km${x.near.t ? `、${fmtHM(x.near.t)}` : ''}）`).join('；')}</div>`);
+  for (const a of A.thzAdv) {
+    const inZ = A.stThz.filter(x => x.adv && x.adv.kind === a.kind).map(x => x.s.name);
+    rows.push(`<div class="al-r" style="--c:var(--thz)"><b>⚡ ${esc(a.kind)}</b>${esc(a.areas.join('、'))}${a.end ? `<em>至 ${fmtShort(a.end)}</em>` : ''}${
+      inZ.length ? `<br>範圍內站臺：${stnList(inZ)}` : ''}</div>`);
+  }
+  // 沒有資料 ≠ 沒有事：哪一種沒取得就講哪一種
+  const miss = [WX_SRC ? '' : '豪大雨與雷雨特報', LTN_AT ? '' : '落雷實測'].filter(Boolean);
+  return `<div class="card pad al-card"${rows.length ? '' : ' style="border-color:var(--edge)"'}>
+    <div class="al-h"><b>${rows.length ? '即時告警' : '即時告警　目前沒有'}</b><small>大雨以上特報・落雷・雷雨特報</small></div>
+    ${rows.join('')}
+    ${!rows.length && !miss.length ? '<div class="al-none">沒有大雨以上的特報，站臺附近也沒有對地落雷。</div>' : ''}
+    ${miss.length ? `<div class="al-none">${esc(miss.join('、'))}還沒取得，不能當成沒有。</div>` : ''}</div>`;
+}
+// 戰情頁最上面的一行：有告警才出現，按了到播報員
+function alertBar() {
+  const A = alertData();
+  if (!A.n) return '';
+  const hill = A.rain.filter(r => r.hill.length), top = A.rain[0];
+  const bits = [];
+  if (top) bits.push(`<span style="color:${top.col}">🌧 ${esc(top.kind)}${hill.length ? '（含山區）' : ''}${A.stRain.length ? `・${A.stRain.length} 站在大雨以上範圍` : ''}</span>`);
+  const cg = A.stThz.filter(x => x.cg).length, zone = A.stThz.filter(x => !x.cg && x.adv).length;
+  if (cg || zone || A.thzAdv.length) bits.push(`<span style="color:var(--thz)">⚡ ${cg ? `${cg} 站附近落雷` : A.thzAdv.length ? esc(A.thzAdv[0].kind) : ''}${zone ? `・${zone} 站在雷雨特報範圍` : ''}</span>`);
+  return `<button type="button" class="al-bar" onclick="goTySub('brief')">${bits.join('')}<span class="go">看告警 ›</span></button>`;
 }
 
 function thunderCard() {
@@ -7150,6 +7242,24 @@ function briefText() {
     }
   }
 
+  // ── 即時告警（大雨以上特報、落雷、雷雨特報）：唸稿時先講,值班最常要動作的是這些 ──
+  {
+    const A = alertData(), al = [];
+    for (const r of A.rain) {
+      al.push(`${IN}${r.kind}：${r.hill.length ? `山區 ${r.hill.join('、')}` : ''}${r.hill.length && r.other.length ? '；' : ''}${
+        r.other.length ? r.other.join('、') : ''}${r.end ? `（至${fmtWhen(r.end)}）` : ''}。`);
+    }
+    const ks = [...new Set(A.stRain.map(x => x.r.kind))];
+    ks.forEach(k => al.push(`${IN}站臺在${k}範圍：${A.stRain.filter(x => x.r.kind === k).map(x => x.s.name).join('、')}。`));
+    const cg = A.stThz.filter(x => x.cg);
+    if (cg.length) al.push(`${IN}落雷：${cg.map(x => `${x.s.name} ${A.R} 公里內 ${x.cg} 次（最近 ${x.near.d.toFixed(1)} 公里）`).join('、')}。`);
+    for (const a of A.thzAdv) {
+      const inZ = A.stThz.filter(x => x.adv && x.adv.kind === a.kind).map(x => x.s.name);
+      al.push(`${IN}${a.kind}：${a.areas.join('、')}${inZ.length ? `；範圍內站臺 ${inZ.join('、')}` : ''}。`);
+    }
+    if (al.length) { L.push(''); L.push('即時告警'); L.push(...al); }
+  }
+
   // ── 颱風動態 ──
   L.push('');
   L.push(`${TC_FULL[tcClass(ty.vmax)] || '熱帶氣旋'} ${ty.name}` +
@@ -7320,6 +7430,9 @@ function briefHtml(txt) {
   const wrap = (v, col, bold) =>
     `<span style="color:${col}${bold ? ';font-weight:700' : ''}">${v}</span>`;
   const rainRe = new RegExp('(' + RAIN_LEVELS.map(x => x.name).join('|') + ')', 'g');
+  // 站名（使用者：播報員裡站臺的部分要用顏色分出來）：長的先比,「甲地二站」不會只標到「甲地」
+  const names = [...new Set(DB.stations.map(x => esc(x.name)).filter(x => x.length >= 2))].sort((a, b) => b.length - a.length);
+  const stRe = names.length ? new RegExp('(' + names.map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'g') : null;
 
   /* 一行一行處理。整段一起 replace 的話,但書那幾行會被前面的規則
      先塗上紅色與粗體,再被但書規則包一層灰 —— 內層贏,結果但書比正文還醒目。
@@ -7345,6 +7458,9 @@ function briefHtml(txt) {
       m0 => wrap(m0, 'var(--no)', true));
     h = h.replace(/(可評估復機|不需待機|未達待機門檻)/g, m0 => wrap(m0, 'var(--ok)', true));
     h = h.replace(/(本機推估，非公告|系統推估|推估)/g, m0 => wrap(m0, 'var(--fg4)'));
+    // 打雷（使用者：雷要跟雨分顏色）；站名最後才標,前面的規則都比對不到站名裡的字
+    h = h.replace(/(大雷雨特報|雷雨特報|大雷雨|雷雨|落雷|閃電|打雷)/g, m0 => `<span class="b-thz">${m0}</span>`);
+    if (stRe) h = h.replace(stRe, m0 => `<span class="b-st">${m0}</span>`);
     // 段落標題（不以全形空格起首的那幾行）
     if (raw.startsWith('【')) return `<b style="color:var(--acc);font-size:0.9375rem">${h}</b>`;
     if (!raw.startsWith('　')) return `<b style="color:var(--fg);letter-spacing:.04em">${h}</b>`;
@@ -8930,20 +9046,51 @@ function unitLabel(k) {
   const al = [...unitGroups()].filter(([, v]) => v === k).map(([x]) => x);
   return al.length > 1 ? al.join('／') : k;
 }
-/* 沒填單位的站用位置推：使用者說單位看地點就知道,不用一站一站填。
-   程式裡沒有、也不能放各單位的轄區資料（repo 公開）,所以拿名單裡已知單位、有座標的站當參考：
-   40 km 內最近那一站是哪個單位,就推估是哪個。標「推估」,站臺手動填或報告寫了就以那個為準。 */
-const UNIT_NEAR_KM = 40;
-function unitOf(s) {
-  if (s.unit) return { k: unitKey(s.unit), guess: false };
-  if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return { k: '', guess: false };
-  let best = null, bd = UNIT_NEAR_KM;
+/* 沒填單位的站用位置推：使用者說單位看地點就知道,不用一站一站填。程式裡沒有、也不能放轄區資料（repo 公開）,
+   所以拿名單裡「報告寫的、手動填的」站當參考（不拿推來的再去推別人,推錯會一路傳下去）。
+   邊界（使用者實際發現推錯）：最近的參考站要明顯比其他單位的近——另一個單位最近的站至少遠 1.6 倍、而且多 8 km——
+   才直接寫進站臺；兩個單位差不多近就不替他決定,標「待確認」並列出兩個候選。 */
+const UNIT_NEAR_KM = 40, UNIT_MARGIN = 1.6, UNIT_MARGIN_KM = 8;
+const unitAnchor = o => o.unit && o.unitSrc !== 'geo' && Number.isFinite(o.lat) && Number.isFinite(o.lng);
+function unitGuess(s) {
+  if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return null;
+  const best = new Map();                      // 單位 → 最近的參考站
   for (const o of DB.stations) {
-    if (o === s || !o.unit || !Number.isFinite(o.lat) || !Number.isFinite(o.lng)) continue;
-    const d = distKm(s, o);
-    if (d <= bd) { bd = d; best = o; }
+    if (o === s || !unitAnchor(o)) continue;
+    const d = distKm(s, o), k = unitKey(o.unit), b = best.get(k);
+    if (!b || d < b.d) best.set(k, { d, o });
   }
-  return best ? { k: unitKey(best.unit), guess: true, from: best.name, km: Math.round(bd) } : { k: '', guess: false };
+  const c = [...best].map(([k, v]) => ({ k, d: v.d, from: v.o.name })).sort((x, y) => x.d - y.d);
+  if (!c.length || c[0].d > UNIT_NEAR_KM) return null;
+  const sure = !c[1] || (c[1].d >= c[0].d * UNIT_MARGIN && c[1].d - c[0].d >= UNIT_MARGIN_KM);
+  return { k: c[0].k, from: c[0].from, km: Math.round(c[0].d), sure,
+    alt: !sure && c[1] ? { k: c[1].k, from: c[1].from, km: Math.round(c[1].d) } : null };
+}
+// 有把握的推估直接寫進站臺（使用者：抓得到地點就直接套用,不要問號）；參考站變了會重算,沒把握了就撤掉
+function applyGeoUnits() {
+  let n = 0;
+  for (const s of DB.stations) {
+    if (s.unit && s.unitSrc !== 'geo') continue;
+    const g = unitGuess(s), k = g && g.sure ? g.k : '';
+    if ((s.unit || '') === k) continue;
+    s.unit = k; if (k) s.unitSrc = 'geo'; else delete s.unitSrc;
+    s.mt = Date.now(); n++;
+  }
+  if (n) save();
+  return n;
+}
+function unitOf(s) {
+  if (s.unit) return { k: unitKey(s.unit), guess: false, src: s.unitSrc || 'report' };
+  const g = unitGuess(s);
+  return g ? { k: g.k, guess: true, from: g.from, km: g.km, alt: g.alt } : { k: '', guess: false };
+}
+// 編輯面板上講這個單位是怎麼來的
+function unitSrcTxt(s) {
+  const u = unitOf(s);
+  if (!u.k) return '附近沒有已知單位的站可以參考；貼一份寫了單位的報告，或在這裡填。';
+  if (u.guess) return `邊界不確定：${esc(u.k)}（最近 ${esc(u.from)} ${u.km} km）${u.alt ? `或 ${esc(u.alt.k)}（${esc(u.alt.from)} ${u.alt.km} km）` : ''}，確認後儲存。`;
+  if (u.src === 'geo') { const g = unitGuess(s); return `依位置推估${g ? `（最近已知 ${esc(g.from)} ${g.km} km）` : ''}；推錯就改，改了以你填的為準。`; }
+  return u.src === 'manual' ? '你填的。' : '依貼上的報告。';
 }
 // 區塊標題要整行就是「一、岸際雷達3處：」：事件句裡出現「處理」不能被當成標題整行跳過
 const HDR_RE = /^\s*[一二三四五六七八九十]+\s*[、.．]\s*(.+?)(?:計)?\s*\d*\s*處\s*[:：]?\s*$/;
@@ -9427,8 +9574,8 @@ function pasteDiff(text) {
   const scoped = us.length && pool.some(inU) ? pool.filter(inU) : pool;
   const missing = scoped.filter(s => !cur.has(nameKey(s.name)));
   const roster = R.items.some(it => it.gi === 'L' && it.status === 'on');
-  const unassigned = us.length ? rows.filter(r => r.ex && !r.ex.unit && r.it.unit) : [];
-  const otherUnit = rows.filter(r => r.ex && r.ex.unit && r.it.unit && unitKey(r.ex.unit) !== r.it.unit);
+  const unassigned = us.length ? rows.filter(r => r.ex && r.it.unit && (!r.ex.unit || (r.ex.unitSrc === 'geo' && unitKey(r.ex.unit) !== r.it.unit))) : [];
+  const otherUnit = rows.filter(r => r.ex && r.ex.unit && r.ex.unitSrc !== 'geo' && r.it.unit && unitKey(r.ex.unit) !== r.it.unit);
   const asof = rows.filter(r => r.it.atFrom === 'asof' && r.kind !== 'same');
   const events = R.events.map(e => Object.assign(e, { added: (DB.events || []).some(x => x.key === e.key) }));
   return { rows, ok, ask, skipped, other: R.other, events, merged, missing, cmp, prevAt: base ? base.at : 0,
@@ -9452,8 +9599,10 @@ function pasteRemember(text, D) {
   if (ks.length > 600) ks.sort((a, b) => K[a].t - K[b].t).slice(0, ks.length - 600).forEach(k => delete K[k]);
 }
 function autoUnits(D) {
-  const ua = (D.unassigned || []).filter(r => r.ex && !r.ex.unit);
-  ua.forEach(r => { r.ex.unit = r.it.unit; r.ex.mt = Date.now(); });
+  // 推估來的單位跟報告寫的不一樣,以報告為準（推估只是沒有更好的資料時的權宜）
+  const ua = (D.unassigned || []).filter(r => r.ex && (!r.ex.unit || r.ex.unitSrc === 'geo') && unitKey(r.ex.unit) !== r.it.unit);
+  ua.forEach(r => { r.ex.unit = r.it.unit; r.ex.unitSrc = 'report'; r.ex.mt = Date.now(); });
+  if (ua.length) applyGeoUnits();
   return ua.length;
 }
 function pasteFix(key, v) {
@@ -9876,9 +10025,9 @@ function openStation(id) {
     <label class="fld"><span class="lb">狀態變更時間</span>
       <input type="datetime-local" id="f_at" value="${toInput(s ? s.at : Date.now())}"></label>
     <label class="fld"><span class="lb">所屬單位</span>
-      <input type="text" id="f_unit" value="${esc(s && s.unit ? s.unit : '')}" list="f_units" placeholder="留空：貼報告時自動歸、或依位置推估" autocomplete="off">
+      <input type="text" id="f_unit" value="${esc(s ? unitOf(s).k : '')}" list="f_units" placeholder="例：報告上寫的單位名稱" autocomplete="off">
       <datalist id="f_units">${[...new Set(DB.stations.map(x => unitKey(x.unit)).filter(Boolean))].map(k => `<option value="${esc(k)}">`).join('')}</datalist>
-      <span class="sub">同一轄區的不同寫法會歸成同一個，對照在「設定 › 單位與回報用語」。${s && !s.unit && unitOf(s).k ? `目前依 ${esc(unitOf(s).from)}（${unitOf(s).km} km）推估是 ${esc(unitOf(s).k)}。` : ''}</span></label>
+      <span class="sub">${s ? unitSrcTxt(s) + '　' : ''}同一轄區的不同寫法會歸成同一個，對照在「設定 › 單位與回報用語」。</span></label>
     <label class="fld"><span class="lb">座標　萬用輸入</span>
       <input type="text" id="f_ll" value="${s && Number.isFinite(s.lat) ? `${s.lat}, ${s.lng}` : ''}"
         placeholder="24.2534, 120.5123　或　24°15'12&quot;N 120°30'44&quot;E">
@@ -9953,6 +10102,8 @@ function openStation(id) {
           toast('已清除該站的校正係數');
         };
       }
+      let unitTouched = false;
+      $('#f_unit').addEventListener('input', () => { unitTouched = true; });
       $('#f_save').onclick = () => {
         const name = $('#f_name').value.trim();
         if (!name) return toast('請填站臺名稱');
@@ -9967,8 +10118,13 @@ function openStation(id) {
           hum: humv === '' ? null : clamp(+humv, 0, 100),
           note: $('#f_note').value.trim(),
           terrain: $('#f_terr').value || null,
-          unit: unitKey($('#f_unit').value.trim()),
         };
+        /* 單位只在有動過時才寫：欄位裡預先帶的是推估（可能是邊界待確認的那個）,只改座標、名字就按儲存,
+           不能順手把推估變成「你填的」。 */
+        if (unitTouched || !s) {
+          d.unit = unitKey($('#f_unit').value.trim());
+          d.unitSrc = d.unit ? 'manual' : undefined;
+        }
         const calIn = $('#f_cal');
         if (calIn) {
           const v = parseFloat(calIn.value);

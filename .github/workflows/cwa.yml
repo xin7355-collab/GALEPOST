@@ -26,6 +26,11 @@ on:
   schedule:
     - cron: "3-59/10 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "沒事時也照抓（1＝是）"
+        required: false
+        default: "0"
 
 permissions:
   contents: write
@@ -46,20 +51,39 @@ jobs:
         with:
           ref: claude/feng-shao-lgn3wn
 
+      # 這一輪要不要抓（scripts/fetch_gate.py）：有颱風、特報、落雷就每輪抓；沒事時 30 分鐘一次。
+      # 上一次真的抓的時間記在 .gate/last，用快取帶到下一輪（資料檔的 updated 內容沒變時不會刷新，不能拿來判斷）。
+      - name: Restore last fetch time
+        uses: actions/cache/restore@v4
+        with:
+          path: .gate
+          key: gate-${{ github.run_id }}
+          restore-keys: gate-
+
+      - name: Gate
+        id: gate
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+        run: python3 scripts/fetch_gate.py
+
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == '1'
         with:
           python-version: "3.12"
 
       # 只用標準函式庫（urllib / zipfile / xml），不裝任何套件。
       # 先跑離線自我測試：解析壞了就紅燈，不要把壞掉的結果寫成公開檔案。
       - name: Selftest
+        if: steps.gate.outputs.run == '1'
         run: |
           python scripts/fetch_lightning.py selftest
           python scripts/fetch_typhoon.py selftest
           python scripts/fetch_dgpa.py selftest
           python scripts/fetch_wx.py selftest
+          python scripts/fetch_gate.py selftest
 
       - name: Fetch
+        if: steps.gate.outputs.run == '1'
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
         run: python scripts/fetch_lightning.py
@@ -67,6 +91,7 @@ jobs:
       # 颱風腳本只在「授權碼被拒」時回 1（紅燈通知去換 Secret）；
       # 網路暫時失敗它自己會保留舊資料、回 0，不會每十分鐘紅一次。
       - name: Fetch typhoon
+        if: steps.gate.outputs.run == '1'
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
         run: python scripts/fetch_typhoon.py
@@ -74,22 +99,34 @@ jobs:
       # 雨量站、測站陣風、豪大雨／雷雨特報（data/wx.json）：沒填授權碼的同事也有「出門評估」與站臺豪雨紀錄。
       # 授權碼被拒才回 1；一份抓不到只沿用上一份並記原因
       - name: Fetch weather
-        if: always()
+        if: always() && steps.gate.outputs.run == '1'
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
         run: python scripts/fetch_wx.py
 
       # 停班停課公告不需要金鑰；抓不到只記原因、保留上一次成功的那份，永遠回 0（不讓官方網站的狀況把管線弄紅）
       - name: Fetch DGPA
-        if: always()
+        if: always() && steps.gate.outputs.run == '1'
         run: python scripts/fetch_dgpa.py
 
       # 內容沒變就不要 commit —— 沒有雷的日子不該每十分鐘產生一次提交，
       # 每一次提交都會觸發一輪 Pages 重新部署。
       # 颱風那步紅燈時，落雷資料照樣要推上去，所以 if: always()
+      # 記下這一輪有抓（就算某一支失敗，其他幾支也抓了；下一輪照 30 分鐘的規則算）
+      - name: Stamp fetch time
+        if: always() && steps.gate.outputs.run == '1'
+        run: python3 scripts/fetch_gate.py stamp
+
+      - name: Save fetch time
+        if: always() && steps.gate.outputs.run == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: .gate
+          key: gate-${{ github.run_id }}
+
       - name: Commit if changed
         id: commit
-        if: always()
+        if: always() && steps.gate.outputs.run == '1'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
