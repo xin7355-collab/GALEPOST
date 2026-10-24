@@ -1,0 +1,79 @@
+# 瀏覽器自動測試（Playwright，iPhone 13 畫面大小）。
+# 只在動到程式本體或測試時跑；落雷機器人每十分鐘只改 data/lightning.json，不會觸發。
+# 測試會擋掉所有對外連線，不需要任何金鑰。
+name: E2E tests
+
+on:
+  push:
+    paths:
+      - "index.html"
+      - "sw.js"
+      - "assets/coast.json"
+      - "e2e/**"
+      - "playwright.config.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/**"
+      - ".github/workflows/e2e.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # --ignore-scripts：不讓任何套件的安裝腳本在 CI 裡執行
+      # --no-audit --prefer-offline：快取已還原時不必再連 npm。10/22 連兩次 npm ci 沒有任何輸出、
+      #   卡滿 5 分鐘（快取有還原成功）——安裝前的 audit 與版本重新確認是唯二會連線的地方。
+      # 安裝卡住時 5 分鐘就放棄，不要空等到整個 job 的 15 分鐘
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
+        timeout-minutes: 5
+      # 瀏覽器本體從 Playwright 的 CDN 抓（快）；系統套件走 Ubuntu 的 apt 鏡像——10/22、10/23 兩次鏡像
+      # 每秒幾十 KB（7 MB 的中文字型抓了 3 分鐘），整步卡滿 8 分鐘、測試一個都沒跑到就紅燈。
+      # runner 映像本來就裝了 Chrome，執行需要的函式庫大多已在；apt 4 分鐘裝不完就跳過並留警告。
+      # 真的缺函式庫時瀏覽器會起不來、測試照樣紅燈，不會默默通過。
+      - name: 安裝瀏覽器
+        run: |
+          npx playwright install chromium
+          timeout 240 npx playwright install-deps chromium \
+            || echo "::warning::系統套件 4 分鐘內沒裝完（apt 鏡像慢），改用 runner 映像內建的函式庫"
+        timeout-minutes: 8
+
+      - name: 後端腳本自我測試
+        run: |
+          python3 scripts/fetch_lightning.py selftest
+          python3 scripts/fetch_typhoon.py selftest
+          python3 scripts/fetch_dgpa.py selftest
+          python3 scripts/fetch_wx.py selftest
+          python3 scripts/build_tyhist.py selftest
+          python3 scripts/build_coast.py selftest
+
+      - run: npx playwright test
+
+      # 失敗時把截圖與 trace 留下來（Actions 頁面可下載），成功也留報告方便對照
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore

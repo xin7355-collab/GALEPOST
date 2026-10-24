@@ -1,0 +1,121 @@
+# 氣象署資料的後端管線：落雷（data/lightning.json）＋颱風路徑與警報單（data/typhoon.json）
+# ＋人事行政總處停班停課公告（data/dgpa.json，官方頁沒有 CORS、前端的第三方代理會掛，後端直接抓）
+# ＋雨量站、測站陣風、豪大雨雷雨特報（data/wx.json）。
+#
+# 兩支放同一個工作流程、同一個 commit：分開兩支的話會同時推同一條分支，
+# 後推的那支會因為不是 fast-forward 被拒，資料就白抓了。
+#
+# 為什麼要有這個：O-A0039-001 的端點沒有送 CORS 標頭，瀏覽器直連一定被擋
+# （實機訊息是 Load failed）。這不是網址寫錯或格式不對——瀏覽器就是不准讀。
+# 由後端抓好、放成同源的靜態檔，就沒有 CORS 這件事，使用者也不必自己架代理。
+#
+# 要啟用：到 repo → Settings → Secrets and variables → Actions
+# 新增 CWA_API_KEY。沒設的話這支照樣會跑，只是寫一個 hasKey:false 的空殼，
+# 前端會自動略過，不會在畫面上留一個永遠失敗的區塊。
+#
+# 時效說明：GitHub 的排程最短 5 分鐘，而且**實際觸發常常延遲 5～20 分鐘**
+# （尖峰時更久）。所以這份資料會比現場慢一截。落雷資料本身涵蓋的是
+# 「過去 1 小時」，慢十幾分鐘還在可用範圍，但前端一定會標出資料時間，
+# 不會假裝是即時的。
+name: Fetch CWA data
+
+on:
+  # 實測（10/19–10/22）：寫 */10，實際 3 天只跑 17 次、間隔 3～5 小時——GitHub 排程在負載高時會整批丟掉。
+  # 官方文件說整點最擠，所以避開 :00（3、13、23…分）；這只能改善一點，要穩定每 10 分鐘得靠外部觸發
+  # （cron-job.org 之類定時呼叫 workflow_dispatch；設定步驟不放 repo，打包給使用者）。
+  schedule:
+    - cron: "3-59/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write   # 推完資料要自己叫 Pages 部署（見最後一步）
+
+concurrency:
+  group: cwa-data
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    # 腳本自己有 4 分鐘預算；卡在網路上也不能超過下一輪排程，否則一卡就燒 6 小時
+    timeout-minutes: 8
+    steps:
+      # 這個 job 最後要 git push 資料檔，所以保留 checkout 的憑證（不設 persist-credentials: false）
+      - uses: actions/checkout@v4 # guardrails: ignore
+        with:
+          ref: claude/feng-shao-lgn3wn
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 只用標準函式庫（urllib / zipfile / xml），不裝任何套件。
+      # 先跑離線自我測試：解析壞了就紅燈，不要把壞掉的結果寫成公開檔案。
+      - name: Selftest
+        run: |
+          python scripts/fetch_lightning.py selftest
+          python scripts/fetch_typhoon.py selftest
+          python scripts/fetch_dgpa.py selftest
+          python scripts/fetch_wx.py selftest
+
+      - name: Fetch
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+        run: python scripts/fetch_lightning.py
+
+      # 颱風腳本只在「授權碼被拒」時回 1（紅燈通知去換 Secret）；
+      # 網路暫時失敗它自己會保留舊資料、回 0，不會每十分鐘紅一次。
+      - name: Fetch typhoon
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+        run: python scripts/fetch_typhoon.py
+
+      # 雨量站、測站陣風、豪大雨／雷雨特報（data/wx.json）：沒填授權碼的同事也有「出門評估」與站臺豪雨紀錄。
+      # 授權碼被拒才回 1；一份抓不到只沿用上一份並記原因
+      - name: Fetch weather
+        if: always()
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+        run: python scripts/fetch_wx.py
+
+      # 停班停課公告不需要金鑰；抓不到只記原因、保留上一次成功的那份，永遠回 0（不讓官方網站的狀況把管線弄紅）
+      - name: Fetch DGPA
+        if: always()
+        run: python scripts/fetch_dgpa.py
+
+      # 內容沒變就不要 commit —— 沒有雷的日子不該每十分鐘產生一次提交，
+      # 每一次提交都會觸發一輪 Pages 重新部署。
+      # 颱風那步紅燈時，落雷資料照樣要推上去，所以 if: always()
+      - name: Commit if changed
+        id: commit
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # git diff 看不到新檔：data/dgpa.json 第一次產生時還沒進 git，要用 status 才看得到
+          if [ -z "$(git status --porcelain -- data/)" ]; then
+            echo "no change"
+            exit 0
+          fi
+          git add -- data/
+          git commit -m "data $(date -u -d '+8 hours' '+%Y-%m-%d %H:%M')"
+          # 開發時也會有人推這條分支；遠端多了 commit 就先疊上去再推，失敗重試幾次
+          for i in 1 2 3 4; do
+            if git pull --rebase --quiet origin claude/feng-shao-lgn3wn && git push; then
+              echo "pushed=1" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep $((2 ** i))
+          done
+          exit 1
+
+      # 用 GITHUB_TOKEN 推的 commit **不會觸發其他工作流程**（GitHub 刻意防無限迴圈），
+      # 所以 pages.yml 的 on: push 永遠等不到機器人的提交——網站上的資料檔會停在
+      # 最後一次「人」推的版本，畫面顯示「43 小時沒有更新」，其實 repo 裡是新的。
+      # workflow_dispatch 是少數允許 GITHUB_TOKEN 觸發的事件，推成功就直接叫部署。
+      - name: Deploy Pages
+        if: always() && steps.commit.outputs.pushed == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref claude/feng-shao-lgn3wn

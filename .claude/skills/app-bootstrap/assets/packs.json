@@ -1,0 +1,135 @@
+{
+  "_說明": "技能組合。路徑都相對於 skl repo 根目錄。app-guardrails-audit 一律會裝，不用列。",
+  "core": {
+    "desc": "每個 App 都該有：架構審查、程式碼審查、精準修 bug、上線前檢查、套件漏洞",
+    "skills": [
+      "engineering-team/skills/senior-architect",
+      "engineering-team/skills/code-reviewer",
+      "engineering/skills/focused-fix",
+      "engineering/skills/ship-gate",
+      "engineering/skills/dependency-auditor"
+    ]
+  },
+  "pwa": {
+    "desc": "手機網頁／PWA：前端、Playwright 瀏覽器自動化、效能分析與「先量再改」的效能優化",
+    "skills": [
+      "engineering-team/skills/senior-frontend",
+      "engineering/skills/browser-automation",
+      "engineering/skills/performance-profiler",
+      "community/skills/performance-optimization"
+    ]
+  },
+  "actions": {
+    "desc": "GitHub Actions 自動化：CI/CD、DevOps、金鑰管理",
+    "skills": [
+      "engineering/skills/ci-cd-pipeline-builder",
+      "engineering-team/skills/senior-devops",
+      "engineering/skills/env-secrets-manager"
+    ]
+  },
+  "backend": {
+    "desc": "後端／資料庫／API：SQLite 與 SQL、API 設計審查",
+    "skills": [
+      "engineering-team/skills/senior-backend",
+      "engineering/skills/sql-database-assistant",
+      "engineering/skills/api-design-reviewer"
+    ]
+  },
+  "security": {
+    "desc": "資安：安全審查、第三方技能安全掃描",
+    "skills": [
+      "engineering-team/skills/senior-security",
+      "engineering/skills/skill-security-auditor"
+    ]
+  },
+  "stock": {
+    "desc": "股票投資：台股資料收集與分析、美股／印度股基本面分析、財務報表與估值",
+    "skills": [
+      "xin-toolkit/skills/tw-stock",
+      "finance/skills/stock-analysis",
+      "finance/skills/financial-analyst",
+      "community/skills/statsmodels",
+      "community/skills/polars",
+      "community/skills/statistical-analysis"
+    ]
+  },
+  "video": {
+    "desc": "影片：全自動剪輯（去空白、精華、直式短影音）",
+    "skills": [
+      "xin-toolkit/skills/auto-video-edit"
+    ]
+  },
+  "workflow": {
+    "desc": "開發方法論（superpowers）：先腦力激盪與寫計畫、系統化除錯、測試先行、完成前必驗證、請求程式審查；防止 AI 偷降標準過關、用官方文件查證",
+    "skills": [
+      "superpowers/skills/brainstorming",
+      "superpowers/skills/writing-plans",
+      "superpowers/skills/executing-plans",
+      "superpowers/skills/systematic-debugging",
+      "superpowers/skills/test-driven-development",
+      "superpowers/skills/verification-before-completion",
+      "superpowers/skills/requesting-code-review",
+      "community/skills/constraint-driven-development",
+      "community/skills/source-driven-development"
+    ]
+  },
+  "python": {
+    "desc": "Python 專案：寫法慣例、測試、爬蟲資料擷取、錯誤處理",
+    "skills": [
+      "ecc/skills/python-patterns",
+      "ecc/skills/python-testing",
+      "ecc/skills/data-scraper-agent",
+      "xin-toolkit/skills/web-to-markdown",
+      "ecc/skills/error-handling"
+    ]
+  },
+  "visual": {
+    "desc": "視覺設計（社群精選）：介面設計與評審、去掉 AI 樣板感的設計方向、改造既有網頁、線框圖、線條插圖、動態架構圖、程式動畫、數學解說動畫、互動架構圖與流程圖、配色字型與 UX 規則查詢、把回答做成一頁圖解網頁",
+    "skills": [
+      "community/skills/oil-ui",
+      "community/skills/hairline-create",
+      "community/skills/live-panel",
+      "community/skills/huashu-art-motion",
+      "community/skills/manimgx",
+      "community/skills/design-taste-frontend",
+      "community/skills/redesign-existing-projects",
+      "community/skills/wireframe",
+      "community/skills/archify",
+      "community/skills/ui-ux-pro-max",
+      "community/skills/answer-me-with-html"
+    ]
+  },
+  "ai": {
+    "desc": "App 裡有呼叫 AI：自動挑模型與下架自動換、控管費用、優化提示詞",
+    "skills": [
+      "xin-toolkit/skills/ai-model-router",
+      "ecc/skills/cost-aware-llm-pipeline",
+      "ecc/skills/prompt-optimizer"
+    ]
+  },
+  "agent": {
+    "desc": "AI Agent（會自己查資料、做事的 AI）：選單一或多代理人模式、交接與失敗處理、產生並驗證工具規格、分析執行紀錄找成本與瓶頸、把 API 做成 MCP 工具",
+    "skills": [
+      "engineering/skills/agent-workflow-designer",
+      "engineering/skills/agent-designer",
+      "engineering/skills/mcp-server-builder"
+    ]
+  },
+  "writing": {
+    "desc": "繁體中文寫作（社群精選）：去 AI 味、台灣技術寫作規範、萃取你自己的文字語氣、英文去 AI 味",
+    "skills": [
+      "community/skills/zh-tw-humanizer",
+      "community/skills/tw-writing",
+      "community/skills/voice-profile-extraction",
+      "community/skills/humanizer"
+    ]
+  },
+  "research": {
+    "desc": "查證與學術寫作（社群精選）：找文獻並查核引用真假與支持度、中文學術寫作紀律",
+    "skills": [
+      "community/skills/lit-review",
+      "community/skills/academic-writing-discipline",
+      "community/skills/markitdown"
+    ]
+  }
+}

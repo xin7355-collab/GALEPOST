@@ -1,0 +1,62 @@
+# 每週重建一次西北太平洋颱風強度表（data/tyhist.json），給總覽名牌算「今年第幾強、1951 年以來第幾強」。
+# 原始檔是 IBTrACS（NOAA NCEI）七、八十 MB 的 CSV，腳本逐行串流讀、只留每顆颱風的最低氣壓與最大風速。
+# 每 10 分鐘的氣象管線不跑這個：歷史資料一週才變一次，不必每次下載幾十 MB。
+name: Build typhoon history
+
+on:
+  schedule:
+    - cron: "17 19 * * 0"     # 每週一 03:17（臺灣時間）；避開整點
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write   # 推完要自己叫 Pages 部署（GITHUB_TOKEN 推的 commit 不會觸發 pages.yml）
+
+concurrency:
+  group: tyhist
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4 # guardrails: ignore
+        with:
+          ref: claude/feng-shao-lgn3wn
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Selftest
+        run: python scripts/build_tyhist.py selftest
+
+      - name: Build
+        run: python scripts/build_tyhist.py build
+
+      - name: Commit if changed
+        id: commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- data/tyhist.json && git ls-files --error-unmatch data/tyhist.json >/dev/null 2>&1; then
+            echo "no change"
+            exit 0
+          fi
+          git add data/tyhist.json
+          git commit -m "data $(date -u -d '+8 hours' '+%Y-%m-%d')"
+          for i in 1 2 3 4; do
+            if git pull --rebase --quiet origin claude/feng-shao-lgn3wn && git push; then
+              echo "pushed=1" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep $((2 ** i))
+          done
+          exit 1
+
+      - name: Deploy Pages
+        if: steps.commit.outputs.pushed == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref claude/feng-shao-lgn3wn
