@@ -872,7 +872,7 @@ test('播放鍵往後走、再按就停；拖到 48 小時讀數卡列出暴風�
 test('總覽名牌：第幾號颱風、英文名、警報只寫最高一級（陸上），陸上與海上警戒分開列', async ({ page }) => {
   const warn = { info: [{ headline: '海上陸上颱風警報', effective: iso(Date.now() - 3600000), expires: iso(Date.now() + 2 * 3600000),
     area: [{ areaDesc: '巴士海峽東部' }, { areaDesc: '臺灣東南部海面' }, { areaDesc: '臺東縣' }, { areaDesc: '屏東縣' }],
-    description: { section: [{ title: '命名與位置', value: '中度颱風 測試颱風（國際命名 TESTA）22日15時的中心位置在北緯 20.5 度，東經 124.5 度，即在鵝鑾鼻的東南方約 400 公里之處。' }],
+    description: { section: [{ title: '命名與位置', value: '中度颱風 測試颱風（國際命名 TESTA）22日15時的中心位置在北緯 20.5 度，東經 124.5 度，即在青石岬的東南方約 400 公里之處。' }],
       'typhoon-info': [{ section: [{ title: '警報報數', value: '6-1' }, { title: '颱風編號', value: '29' }] }] } }] };
   const errors = await bootWith(page, [NEAR], { ty: typhoonFile({ warn }) });
   await page.locator('.nav button[data-p="ty"]').click();
@@ -887,7 +887,7 @@ test('總覽名牌：第幾號颱風、英文名、警報只寫最高一級（�
   await expect(hero.locator('.wzone').first().locator('span')).toHaveText('臺東縣、屏東縣');
   await expect(hero.locator('.wzone.sea span')).toHaveText('巴士海峽東部、臺灣東南部海面');
   // 位置描述引用警報單原文,並標來源
-  await expect(page.locator('.lv')).toContainText('鵝鑾鼻的東南方約 400 公里');
+  await expect(page.locator('.lv')).toContainText('青石岬的東南方約 400 公里');
   await expect(page.locator('.lv .src')).toHaveText('警報單');
   await expect(page.locator('.lv .bfg span')).toHaveCount(17);
   expect(errors).toEqual([]);
@@ -1162,7 +1162,7 @@ test('推估說已離開海警範圍、官方警報還在：撤除等官方解�
 });
 
 test('撤除檢核：官方兩項自動帶入且鎖住；手動勾選記時間、照時間排成通報；清除只清手動的', async ({ page }) => {
-  const errors = await bootWith(page, [NEAR], { ty: landLifted(), cfg: { unit: '測試分署' } });
+  const errors = await bootWith(page, [NEAR], { ty: landLifted(), cfg: { unit: '測試單位' } });
   await page.locator('.nav button[data-p="rp"]').click();
   await page.locator('#rpSeg [data-sub="rp:end"]').click();
   const land = page.locator('[data-chk="landOff"]');
@@ -1175,7 +1175,7 @@ test('撤除檢核：官方兩項自動帶入且鎖住；手動勾選記時間�
   await page.locator('#ec_ok').click();
   await expect(page.locator('[data-chk="shrinkNote"]')).toHaveClass(/on/);
   const txt = await page.locator('#endOut').inputValue();
-  expect(txt).toMatch(/^測試分署報告：\n測試颱風應變撤除檢核如下：\n一、\d+月\d+日\d+時中央氣象署解除陸上颱風警報。\n二、\d+月\d+日\d+時接獲縣市災害應變中心縮編通知。\n待辦：/);
+  expect(txt).toMatch(/^測試單位報告：\n測試颱風應變撤除檢核如下：\n一、\d+月\d+日\d+時中央氣象署解除陸上颱風警報。\n二、\d+月\d+日\d+時接獲縣市災害應變中心縮編通知。\n待辦：/);
   expect(txt).not.toMatch(/待辦：[^\n]*接獲縣市災害應變中心縮編通知/);
   await page.locator('#endCopy').click();
   await expect(page.locator('#toast')).toHaveText('撤除檢核已複製');
@@ -1272,10 +1272,10 @@ test('時序可以手動改：改最新那筆，站臺狀態、時間、濕度�
 
 // 群組回報判讀用的站臺：全名、可以只寫地名的、名字很像的兩站
 const GSTS = [
-  { ...NEAR, id: 'g1', name: '鵝鑾鼻雷達站', lat: 21.9, lng: 120.85, at: Date.now() - 86400000 },
-  { ...NEAR, id: 'g2', name: '林口站', lat: 25.1, lng: 121.3, at: Date.now() - 86400000 },
-  { ...NEAR, id: 'g3', name: '林口二站', lat: 25.0, lng: 121.3, at: Date.now() - 86400000 },
-  { ...NEAR, id: 'g4', name: '蘇澳港雷達站', status: 'standby', hum: 80, lat: 24.6, lng: 121.9, at: Date.now() - 7200000 },
+  { ...NEAR, id: 'g1', name: '青石岬雷達站', lat: 21.9, lng: 120.85, at: Date.now() - 86400000 },
+  { ...NEAR, id: 'g2', name: '松岡站', lat: 25.1, lng: 121.3, at: Date.now() - 86400000 },
+  { ...NEAR, id: 'g3', name: '松岡二站', lat: 25.0, lng: 121.3, at: Date.now() - 86400000 },
+  { ...NEAR, id: 'g4', name: '白浦港雷達站', status: 'standby', hum: 80, lat: 24.6, lng: 121.9, at: Date.now() - 7200000 },
 ];
 const goPaste = async page => {
   await page.locator('.nav button[data-p="rp"]').click();
@@ -1286,17 +1286,17 @@ test('萬用判讀：各種寫法都讀得出站名、動作、時間；閒聊�
   const errors = await bootWith(page, GSTS);
   const r = await page.evaluate(() => {
     const R = readGroup([
-      '鵝鑾鼻雷達站0830完成關機',                       // 全名＋裸寫時間
-      '林口 08:45 關機',                                 // 只寫地名、時間有冒號
-      '報告：林口二站已於8點30分實施待機，濕度85%',      // 「林口二站」不能被「林口」吃掉；濕度
-      '鵝鑾鼻、林口二站 0715 恢復開機',                  // 一句兩站
-      '蘇澳港由待機恢復開機 0600',                       // 兩個動作取最後一個
-      '鵝鑾鼻０７００關機，林口0705待機',                // 一句兩組；全形數字
-      '鵝鑾鼻站0640待機',                                // 簡稱後面的「站」一起算，不會多出一個新站「站」
-      '林口站預計0900關機',                              // 預計 → 問
-      '林口站尚未開機',                                  // 否定、沒時間 → 問
+      '青石岬雷達站0830完成關機',                       // 全名＋裸寫時間
+      '松岡 08:45 關機',                                 // 只寫地名、時間有冒號
+      '報告：松岡二站已於8點30分實施待機，濕度85%',      // 「松岡二站」不能被「松岡」吃掉；濕度
+      '青石岬、松岡二站 0715 恢復開機',                  // 一句兩站
+      '白浦港由待機恢復開機 0600',                       // 兩個動作取最後一個
+      '青石岬０７００關機，松岡0705待機',                // 一句兩組；全形數字
+      '青石岬站0640待機',                                // 簡稱後面的「站」一起算，不會多出一個新站「站」
+      '松岡站預計0900關機',                              // 預計 → 問
+      '松岡站尚未開機',                                  // 否定、沒時間 → 問
       '新設站0830關機',                                  // 名單裡沒有 → 問
-      '收到，辛苦了', '記得關機喔', '林口站關機了嗎？', '請各站0900前完成待機',
+      '收到，辛苦了', '記得關機喔', '松岡站關機了嗎？', '請各站0900前完成待機',
     ].join('\n'));
     const nm = id => (DB.stations.find(s => s.id === id) || {}).name || '?' + '';
     const hm = t => t ? `${String(new Date(t).getHours()).padStart(2, '0')}${String(new Date(t).getMinutes()).padStart(2, '0')}` : '-';
@@ -1304,12 +1304,12 @@ test('萬用判讀：各種寫法都讀得出站名、動作、時間；閒聊�
       other: R.other };
   });
   expect(r.items).toEqual([
-    '鵝鑾鼻雷達站|off|0830||', '林口站|off|0845||', '林口二站|standby|0830|85|',
-    '鵝鑾鼻雷達站|on|0715||', '林口二站|on|0715||', '蘇澳港雷達站|on|0600||',
-    '鵝鑾鼻雷達站|off|0700||', '林口站|standby|0705||', '鵝鑾鼻雷達站|standby|0640||',
-    '林口站|off|0900||plan', '林口站|on|-||neg', '?新設站|off|0830||new',
+    '青石岬雷達站|off|0830||', '松岡站|off|0845||', '松岡二站|standby|0830|85|',
+    '青石岬雷達站|on|0715||', '松岡二站|on|0715||', '白浦港雷達站|on|0600||',
+    '青石岬雷達站|off|0700||', '松岡站|standby|0705||', '青石岬雷達站|standby|0640||',
+    '松岡站|off|0900||plan', '松岡站|on|-||neg', '?新設站|off|0830||new',
   ]);
-  expect(r.other).toEqual(['收到，辛苦了', '記得關機喔', '林口站關機了嗎？', '請各站0900前完成待機']);
+  expect(r.other).toEqual(['收到，辛苦了', '記得關機喔', '松岡站關機了嗎？', '請各站0900前完成待機']);
   // 「王小明：…」只算那一行是他說的；下一行沒有發話人、沒站名沒時間，是閒聊
   const s2 = await page.evaluate(() => readGroup('王小明：已完成關機\n已完成待機'));
   expect(s2.items.map(x => [x.sender, x.why.join(',')])).toEqual([['王小明', 'new,notime']]);
@@ -1317,16 +1317,16 @@ test('萬用判讀：各種寫法都讀得出站名、動作、時間；閒聊�
   expect(errors).toEqual([]);
 });
 
-test('事件句（停電案）：發電機的停機、啟動不算站臺狀態；雷達開機後切待機＝待機、紅外線正常運作＝開機；隊本部的不算', async ({ page }) => {
+test('事件句（停電案）：發電機的停機、啟動不算站臺狀態；雷達開機後切待機＝待機、紅外線正常運作＝開機；辦公室的不算', async ({ page }) => {
   // 使用者實際貼來、舊版看不懂的三句（站名換掉）
   const errors = await bootWith(page, [
-    { ...NEAR, id: 'r1', name: '大坪頂雷達站', status: 'off', at: Date.now() - 3 * 3600000 },
-    { ...NEAR, id: 'r2', name: '大坪頂紅外線站', at: Date.now() - 86400000 }]);
+    { ...NEAR, id: 'r1', name: '霞雲嶺雷達站', status: 'off', at: Date.now() - 3 * 3600000 },
+    { ...NEAR, id: 'r2', name: '霞雲嶺紅外線站', at: Date.now() - 86400000 }]);
   const r = await page.evaluate(() => {
     const R = readGroup([
-      '三、大坪頂雷達停電案，於0540時發電機已停機休息滿2小時，0610時駐守人員已啟動發電機完成雷達開機並切換為待機模式。',
-      '四、大坪頂紅外線停電案，於0532時廳舍無預警停電，發電機自行啟動，紅外線正常運作，賡續管制於1532時實施發電機供電達10小時後停機修整，以上報告。',
-      '三、0545時隊本部因台電電壓不穩原因，於0547時啟用發電機運轉供電。',
+      '三、霞雲嶺雷達停電案，於0540時發電機已停機休息滿2小時，0610時駐守人員已啟動發電機完成雷達開機並切換為待機模式。',
+      '四、霞雲嶺紅外線停電案，於0532時廳舍無預警停電，發電機自行啟動，紅外線正常運作，賡續管制於1532時實施發電機供電達10小時後停機修整，以上報告。',
+      '三、0545時辦公室因台電電壓不穩原因，於0547時啟用發電機運轉供電。',
       '五、甲地雷達停電案，於0600時完成雷達開機。',                 // 名單裡沒有：站名要抓「甲地雷達」，不是整段
     ].join('\n'));
     const nm = id => (DB.stations.find(s => s.id === id) || {}).name;
@@ -1334,12 +1334,12 @@ test('事件句（停電案）：發電機的停機、啟動不算站臺狀態�
     return { items: R.items.map(x => [x.sid ? nm(x.sid) : '?' + x.cand, x.status, hm(x.at), x.why.join(',')].join('|')),
       other: R.other, ev: R.events.map(e => e.text.slice(0, 8)) };
   });
-  expect(r.items).toEqual(['大坪頂雷達站|standby|0610|', '大坪頂紅外線站|on|0532|', '?甲地雷達|on|0600|new']);
-  // 隊本部那句不是站臺回報，但它是事件（可以列入回報稿的「事件」段）
+  expect(r.items).toEqual(['霞雲嶺雷達站|standby|0610|', '霞雲嶺紅外線站|on|0532|', '?甲地雷達|on|0600|new']);
+  // 辦公室那句不是站臺回報，但它是事件（可以列入回報稿的「事件」段）
   expect(r.other).toEqual([]);
-  expect(r.ev).toEqual(['大坪頂雷達停電案', '大坪頂紅外線停電', '0545時隊本部', '甲地雷達停電案，']);
+  expect(r.ev).toEqual(['霞雲嶺雷達停電案', '霞雲嶺紅外線停電', '0545時辦公室', '甲地雷達停電案，']);
   // 整行是「一、岸際雷達3處：」才是區塊標題；句子裡有「處理」不能被當成標題跳過
-  const h = await page.evaluate(() => [readGroup('一、岸際雷達3處：'), readGroup('三、大坪頂雷達停電處理中，0620時完成開機。')]
+  const h = await page.evaluate(() => [readGroup('一、岸際雷達3處：'), readGroup('三、霞雲嶺雷達停電處理中，0620時完成開機。')]
     .map(R => R.items.length + '/' + R.other.length));
   expect(h).toEqual(['0/0', '1/0']);
   expect(errors).toEqual([]);
@@ -1347,32 +1347,32 @@ test('事件句（停電案）：發電機的停機、啟動不算站臺狀態�
 
 test('事件段：停電案原文列入回報稿（可勾選、改字），結語前多一段「事件」；短的狀態句不算事件；清除紀錄一起清', async ({ page }) => {
   const errors = await bootWith(page, [
-    { ...NEAR, id: 'r1', name: '大坪頂雷達站', status: 'off', at: Date.now() - 3 * 3600000 },
-    { ...NEAR, id: 'r2', name: '大坪頂紅外線站', at: Date.now() - 86400000 }],
+    { ...NEAR, id: 'r1', name: '霞雲嶺雷達站', status: 'off', at: Date.now() - 3 * 3600000 },
+    { ...NEAR, id: 'r2', name: '霞雲嶺紅外線站', at: Date.now() - 86400000 }],
     { db: { ctl: { start: Date.now() - 4 * 3600000, end: 0, ty: '' }, since: Date.now() - 4 * 3600000 } });
   await goPaste(page);
   await page.locator('#impText').fill([
-    '三、大坪頂雷達停電案，於0540時發電機已停機休息滿2小時，0610時駐守人員已啟動發電機完成雷達開機並切換為待機模式。',
-    '四、大坪頂紅外線停電案，於0532時廳舍無預警停電，發電機自行啟動，紅外線正常運作，以上報告。',
-    '三、0545時隊本部因台電電壓不穩原因，於0547時啟用發電機運轉供電。',
-    '大坪頂雷達0612斷電',
+    '三、霞雲嶺雷達停電案，於0540時發電機已停機休息滿2小時，0610時駐守人員已啟動發電機完成雷達開機並切換為待機模式。',
+    '四、霞雲嶺紅外線停電案，於0532時廳舍無預警停電，發電機自行啟動，紅外線正常運作，以上報告。',
+    '三、0545時辦公室因台電電壓不穩原因，於0547時啟用發電機運轉供電。',
+    '霞雲嶺雷達0612斷電',
   ].join('\n'));
   await page.locator('#impGo').click();
   const card = page.locator('#impRes .ev-card');
   await expect(card.locator('.ev-row')).toHaveCount(3);                    // 最後那句短的只是狀態
   await expect(card.locator('.ev-row').nth(1)).toContainText('紅外線正常運作。');
   await expect(card.locator('.ev-row').nth(1)).not.toContainText('以上報告');
-  // 隊本部那句不要；第一句改字
+  // 辦公室那句不要；第一句改字
   await card.locator('.ev-row').nth(2).locator('input').uncheck();
   await card.locator('[data-evtx="0"]').click();
-  await page.locator('#ev_tx').fill('大坪頂雷達停電，0610時以發電機供電完成開機並實施待機');
+  await page.locator('#ev_tx').fill('霞雲嶺雷達停電，0610時以發電機供電完成開機並實施待機');
   await page.locator('#ev_ok').click();
   await page.locator('#impEv').click();
   await expect(page.locator('#toast')).toHaveText('已列入回報稿 2 句事件');
   await expect(card.locator('.dif-k')).toHaveCount(2);                     // 已列入
   const out = await page.locator('#out').inputValue();
-  expect(out).toMatch(/、事件：\n1\.大坪頂雷達停電，0610時以發電機供電完成開機並實施待機。\n2\.大坪頂紅外線停電案，於0532時廳舍無預警停電，發電機自行啟動，紅外線正常運作。\n.、本單位賡續管制復機情形。$/);
-  expect(out).not.toContain('隊本部');
+  expect(out).toMatch(/、事件：\n1\.霞雲嶺雷達停電，0610時以發電機供電完成開機並實施待機。\n2\.霞雲嶺紅外線停電案，於0532時廳舍無預警停電，發電機自行啟動，紅外線正常運作。\n.、本單位賡續管制復機情形。$/);
+  expect(out).not.toContain('辦公室');
   // 回報稿頁可以刪
   await page.locator('#rpSeg [data-sub="rp:rep"]').click();
   await expect(page.locator('#rpEvents .ev-it')).toHaveCount(2);
@@ -1390,35 +1390,35 @@ test('事件段：停電案原文列入回報稿（可勾選、改字），結�
 test('貼上比對：看不懂、名單裡沒有的跳出來問；對到既有站並記住寫法，下次自動認；略過的同一句不再問', async ({ page }) => {
   const errors = await bootWith(page, GSTS);
   await goPaste(page);
-  const text = ['鵝鑾鼻0630完成關機', '鵝鑾鼻站預計0900關機', '大武0645關機', '收到'].join('\n');
+  const text = ['青石岬0630完成關機', '青石岬站預計0900關機', '丹楓0645關機', '收到'].join('\n');
   await page.locator('#impText').fill(text);
   await page.locator('#impGo').click();
   // 自動跳出：第 1 筆是「預計」
   await expect(page.locator('#shTitle')).toHaveText('要你確認　1 / 2');
   await expect(page.locator('#shBody')).toContainText('像是預計或要求');
   await page.locator('#ak_skip').click();
-  // 第 2 筆：名單裡沒有「大武」→ 對到林口站，勾著「記住」
+  // 第 2 筆：名單裡沒有「丹楓」→ 對到松岡站，勾著「記住」
   await expect(page.locator('#shTitle')).toHaveText('要你確認　2 / 2');
-  await expect(page.locator('#shBody')).toContainText('名單裡沒有這一站：「大武」');
+  await expect(page.locator('#shBody')).toContainText('名單裡沒有這一站：「丹楓」');
   await expect(page.locator('#ak_sid')).toHaveValue('__new');
   await page.locator('#ak_sid').selectOption('g2');
-  await expect(page.locator('#ak_lt')).toHaveText('記住：以後看到「大武」就是 林口站');
+  await expect(page.locator('#ak_lt')).toHaveText('記住：以後看到「丹楓」就是 松岡站');
   await page.locator('#ak_ok').click();
   await expect(page.locator('#sheet')).not.toHaveClass(/on/);
   const res = page.locator('#impRes');
   await expect(res.locator('.stat > div b')).toHaveText(['2', '0', '2', '2']);      // 判讀成功、要確認、要套用、沒回報
   await expect(res.locator('.ok-it')).toHaveCount(2);
-  await expect(res.locator('.ok-it', { hasText: '大武0645關機' })).toContainText('你確認過');
-  expect(await page.evaluate(() => DB.alias)).toEqual({ '大武': 'g2' });
-  // 整段再貼一次（多一句）：問過的不再問、略過的還是略過，「大武」直接認成林口站
-  await page.locator('#impText').fill(text + '\n大武0700恢復開機');
+  await expect(res.locator('.ok-it', { hasText: '丹楓0645關機' })).toContainText('你確認過');
+  expect(await page.evaluate(() => DB.alias)).toEqual({ '丹楓': 'g2' });
+  // 整段再貼一次（多一句）：問過的不再問、略過的還是略過，「丹楓」直接認成松岡站
+  await page.locator('#impText').fill(text + '\n丹楓0700恢復開機');
   await page.locator('#impGo').click();
   await expect(page.locator('#sheet')).not.toHaveClass(/on/);
-  await expect(res.locator('.ok-it', { hasText: '大武0700恢復開機' })).toContainText('林口站');
+  await expect(res.locator('.ok-it', { hasText: '丹楓0700恢復開機' })).toContainText('松岡站');
   await expect(res).toContainText('沒用到的 2 句');
   // 教過的寫法可以刪
   await page.locator('#impBody summary', { hasText: '認得的寫法' }).click();     // 裡面還有一層「範例」
-  await page.locator('[data-unalias="大武"]').click();
+  await page.locator('[data-unalias="丹楓"]').click();
   expect(await page.evaluate(() => DB.alias)).toEqual({});
   expect(errors).toEqual([]);
 });
@@ -1430,15 +1430,15 @@ test('貼上比對：列出判讀成功的資料（附原句、點了可改）�
   await expect(page.locator('#rpSeg [data-sub="rp:imp"]')).toHaveCount(0);
   await expect(page.locator('[data-sp="rp:rep"] #out')).toBeVisible();
   await expect(page.locator('[data-sp="rp:rep"] #impText')).toBeVisible();
-  await page.locator('#impText').fill(['鵝鑾鼻0630完成關機', '報告：林口二站已於6點40分實施待機，濕度85%'].join('\n'));
+  await page.locator('#impText').fill(['青石岬0630完成關機', '報告：松岡二站已於6點40分實施待機，濕度85%'].join('\n'));
   await page.locator('#impGo').click();
   const res = page.locator('#impRes');
   await expect(res.locator('.ok-it')).toHaveCount(2);
-  await expect(res.locator('.ok-it').nth(1)).toContainText('林口二站');
+  await expect(res.locator('.ok-it').nth(1)).toContainText('松岡二站');
   await expect(res.locator('.ok-it').nth(1)).toContainText('濕度 85%');
-  await expect(res.locator('.ok-it').nth(1).locator('small')).toHaveText('報告：林口二站已於6點40分實施待機，濕度85%');
+  await expect(res.locator('.ok-it').nth(1).locator('small')).toHaveText('報告：松岡二站已於6點40分實施待機，濕度85%');
   await expect(res).toContainText('這是第一份貼上');
-  // 點一筆改：林口二站其實是關機
+  // 點一筆改：松岡二站其實是關機
   await res.locator('.ok-it').nth(1).click();
   await expect(page.locator('#shTitle')).toHaveText('修改這筆判讀');
   await page.locator('#ak_st').selectOption('off');
@@ -1447,18 +1447,18 @@ test('貼上比對：列出判讀成功的資料（附原句、點了可改）�
   await page.locator('#impApply').click();
   await expect(page.locator('#toast')).toHaveText('已套用 2 項');
   const st = await page.evaluate(() => DB.stations.map(s => [s.name, s.status]));
-  expect(st).toEqual([['鵝鑾鼻雷達站', 'off'], ['林口站', 'on'], ['林口二站', 'off'], ['蘇澳港雷達站', 'standby']]);
-  await expect(page.locator('#out')).toHaveValue(/鵝鑾鼻雷達站於\d+月\d+日0630時完成關機/);   // 上方回報稿跟著更新
-  await expect(page.locator('#out')).toHaveValue(/林口二站於\d+月\d+日0640時完成關機/);
-  // 下一次：鵝鑾鼻改成待機、多了蘇澳港、林口二站沒出現
-  await page.locator('#impText').fill(['鵝鑾鼻0700待機', '蘇澳港0705恢復開機'].join('\n'));
+  expect(st).toEqual([['青石岬雷達站', 'off'], ['松岡站', 'on'], ['松岡二站', 'off'], ['白浦港雷達站', 'standby']]);
+  await expect(page.locator('#out')).toHaveValue(/青石岬雷達站於\d+月\d+日0630時完成關機/);   // 上方回報稿跟著更新
+  await expect(page.locator('#out')).toHaveValue(/松岡二站於\d+月\d+日0640時完成關機/);
+  // 下一次：青石岬改成待機、多了白浦港、松岡二站沒出現
+  await page.locator('#impText').fill(['青石岬0700待機', '白浦港0705恢復開機'].join('\n'));
   await page.locator('#impGo').click();
   const cmp = res.locator('details.cmp');
   await expect(cmp.locator('summary')).toContainText('新增 1・有變 1・沒出現 1');
-  await expect(cmp.locator('.dif-s', { hasText: '蘇澳港雷達站' })).toContainText('新增');
-  await expect(cmp.locator('.dif-s', { hasText: '鵝鑾鼻雷達站' })).toContainText('有變');
-  await expect(cmp.locator('.dif-s', { hasText: '林口二站' })).toContainText('這次沒出現');
-  await expect(res.locator('.dif', { hasText: '蘇澳港雷達站' }).locator('.dif-nw')).toHaveText('新');
+  await expect(cmp.locator('.dif-s', { hasText: '白浦港雷達站' })).toContainText('新增');
+  await expect(cmp.locator('.dif-s', { hasText: '青石岬雷達站' })).toContainText('有變');
+  await expect(cmp.locator('.dif-s', { hasText: '松岡二站' })).toContainText('這次沒出現');
+  await expect(res.locator('.dif', { hasText: '白浦港雷達站' }).locator('.dif-nw')).toHaveText('新');
   expect(errors).toEqual([]);
 });
 
@@ -1468,7 +1468,7 @@ test('貼上 LINE 聊天紀錄：沒寫時間的用訊息時間；沒寫站名�
   // 訊息 06:30 起：凌晨跑的時候今天的 06:30 還沒到（未來的時間會被拿出來問），改用昨天的日期
   const d = await page.evaluate(() => { const t = new Date(); if (t.getHours() < 7) t.setDate(t.getDate() - 1);
     return `${t.getFullYear()}/${t.getMonth() + 1}/${t.getDate()}（五）`; });
-  const chat = ['[LINE] 颱風回報群組的聊天記錄', '', d, '06:30\t王小明\t鵝鑾鼻站完成關機', '06:40\t李大華\t已完成待機',
+  const chat = ['[LINE] 颱風回報群組的聊天記錄', '', d, '06:30\t王小明\t青石岬站完成關機', '06:40\t李大華\t已完成待機',
     '06:41\t李大華\t（濕度88%）', '06:50\t王小明\t收到'].join('\n');
   await page.locator('#impText').fill(chat);
   await page.locator('#impGo').click();
@@ -1476,15 +1476,15 @@ test('貼上 LINE 聊天紀錄：沒寫時間的用訊息時間；沒寫站名�
   await expect(page.locator('#shBody .ask-q small')).toContainText('李大華');
   await expect(page.locator('#ak_at')).toHaveValue(/T06:40$/);              // 句子沒寫時間：先用訊息時間
   await page.locator('#ak_sid').selectOption('g4');
-  await expect(page.locator('#ak_lt')).toHaveText('記住：以後 李大華 沒寫站名的回報就是 蘇澳港雷達站');
+  await expect(page.locator('#ak_lt')).toHaveText('記住：以後 李大華 沒寫站名的回報就是 白浦港雷達站');
   await page.locator('#ak_ok').click();
   const res = page.locator('#impRes');
-  await expect(res.locator('.ok-it', { hasText: '鵝鑾鼻雷達站' })).toContainText('（訊息時間）');
-  // 下一則李大華沒寫站名的訊息自動算蘇澳港
+  await expect(res.locator('.ok-it', { hasText: '青石岬雷達站' })).toContainText('（訊息時間）');
+  // 下一則李大華沒寫站名的訊息自動算白浦港
   await page.locator('#impText').fill(chat + '\n07:10\t李大華\t已恢復開機');
   await page.locator('#impGo').click();
   await expect(page.locator('#sheet')).not.toHaveClass(/on/);
-  await expect(res.locator('.ok-it', { hasText: '已恢復開機' })).toContainText('蘇澳港雷達站');
+  await expect(res.locator('.ok-it', { hasText: '已恢復開機' })).toContainText('白浦港雷達站');
   expect(errors).toEqual([]);
 });
 
@@ -1492,28 +1492,28 @@ test('沒寫時間的：沿用同一段更早寫過的時間，再沒有就用�
   const at4 = Date.now() - 7200000;
   const errors = await bootWith(page, GSTS.map(x => x.id === 'g4' ? { ...x, at: at4 } : x));
   await goPaste(page);
-  await page.locator('#impText').fill(['鵝鑾鼻0630完成關機', '鵝鑾鼻已關機', '蘇澳港待機中'].join('\n'));
+  await page.locator('#impText').fill(['青石岬0630完成關機', '青石岬已關機', '白浦港待機中'].join('\n'));
   await page.locator('#impGo').click();
   await expect(page.locator('#sheet')).not.toHaveClass(/on/);               // 不再問「沒寫時間」
   const r = await page.evaluate(() => IMP.ok.map(x => [x.sid, x.atFrom, x.at]));
   const t630 = r[0][2];
   expect(await page.evaluate(t => fmtHM(t), t630)).toBe('0630時');           // 用臺灣時間看（CI 機器是 UTC）
   expect(r[1]).toEqual(['g1', 'last', t630]);                                // 同一段前面寫過 0630
-  expect(r[2]).toEqual(['g4', 'last', at4]);                                 // 蘇澳港最後紀錄的時間
-  await expect(page.locator('#impRes .ok-it', { hasText: '蘇澳港待機中' })).toContainText('（沿用最後時間）');
+  expect(r[2]).toEqual(['g4', 'last', at4]);                                 // 白浦港最後紀錄的時間
+  await expect(page.locator('#impRes .ok-it', { hasText: '白浦港待機中' })).toContainText('（沿用最後時間）');
   expect(errors).toEqual([]);
 });
 
 test('分項報告格式：「截止至0845時」＋「（一）正常運作（2）：○○及△△雷達站」，共用尾綴、狀態沒變的不動時間', async ({ page }) => {
   const H = 3600000, now = Date.now();
   const S = (id, name, status, at) => ({ ...NEAR, id, name, status, at });
-  const errors = await bootWith(page, [S('a', '林口雷達站', 'on', now - 24 * H), S('b', '蘇澳雷達站', 'standby', now - 5 * H),
-    S('c', '鵝鑾鼻雷達站', 'on', now - 24 * H), S('d', '大武雷達站', 'on', now - 24 * H), S('e', '富岡雷達站', 'off', now - 6 * H),
-    S('f', '安平港區雷達站', 'on', now - 24 * H), S('g', '林口紅外線站', 'on', now - 24 * H)]);
+  const errors = await bootWith(page, [S('a', '松岡雷達站', 'on', now - 24 * H), S('b', '白浦雷達站', 'standby', now - 5 * H),
+    S('c', '青石岬雷達站', 'on', now - 24 * H), S('d', '丹楓雷達站', 'on', now - 24 * H), S('e', '翠谷雷達站', 'off', now - 6 * H),
+    S('f', '安平港區雷達站', 'on', now - 24 * H), S('g', '松岡紅外線站', 'on', now - 24 * H)]);
   const r = await page.evaluate(() => {
-    const D = pasteDiff(['1.x隊報告：', '截止至0545時，受薔琵颱風影響，相關設備情形說明如下：', '一、雷達：',
-      '（一）正常運作（2）：林口及蘇澳雷達站。', '（二）待機（1）：鵝鑾鼻雷達站。', '（三）關機（3）：大武、富岡雷達站及安平港區雷達站。',
-      '二、紅外線：', '林口紅外線正常運作。', '三、0545時隊本部因台電電壓不穩原因，於0547時啟用發電機運轉供電。',
+    const D = pasteDiff(['1.x組報告：', '截止至0545時，受薔琵颱風影響，相關設備情形說明如下：', '一、雷達：',
+      '（一）正常運作（2）：松岡及白浦雷達站。', '（二）待機（1）：青石岬雷達站。', '（三）關機（3）：丹楓、翠谷雷達站及安平港區雷達站。',
+      '二、紅外線：', '松岡紅外線正常運作。', '三、0545時辦公室因台電電壓不穩原因，於0547時啟用發電機運轉供電。',
       '（三）關機（1）：新港雷達站。'].join('\n'));
     const st = id => DB.stations.find(x => x.id === id);
     return { ok: D.ok.map(x => [x.sid, x.status, x.atFrom, x.atFrom === 'asof' ? fmtHM(x.at) : x.at === st(x.sid).at]),
@@ -1521,10 +1521,10 @@ test('分項報告格式：「截止至0845時」＋「（一）正常運作（2
   });
   expect(r.ok).toEqual([
     ['a', 'on', 'last', true], ['b', 'on', 'asof', '0545時'],                // 狀態沒變：時間不動；變了：用截止時間
-    ['c', 'standby', 'asof', '0545時'], ['d', 'off', 'asof', '0545時'],       // 「大武」借後面的「雷達站」
+    ['c', 'standby', 'asof', '0545時'], ['d', 'off', 'asof', '0545時'],       // 「丹楓」借後面的「雷達站」
     ['e', 'off', 'last', true], ['f', 'off', 'asof', '0545時'], ['g', 'on', 'last', true]]);
   expect(r.ask).toEqual([['新港雷達站', 'off', 'new']]);                     // 名單裡沒有的照樣問
-  expect(r.ev).toBe(1);                                                       // 隊本部發電機那句是事件
+  expect(r.ev).toBe(1);                                                       // 辦公室發電機那句是事件
   expect(errors).toEqual([]);
 });
 
@@ -1976,21 +1976,21 @@ test('現在位置：定位被拒絕時按下去也會切過去，寫出 iPhone 
 
 test('分項報告：各單位簡寫（連續 2 個字對得上就算）、「截止至23日2340時」、標題帶數量、標題跟內容同一行', async ({ page }) => {
   const S = (id, name, type) => ({ ...NEAR, id, name, type, at: Date.now() - 86400000 });
-  const errors = await bootWith(page, [S('r1', '林口雷達站', 't1'), S('r2', '大武雷達站', 't1'), S('r3', '鵝鑾鼻雷達站', 't1'),
-    S('r4', '蘇澳港區雷達站', 't2'), S('r5', '七股雷達站', 't1'), S('r6', '東引雷達站', 't1'), S('r7', '高雄港區雷達站', 't2'),
-    S('i1', '林口紅外線站', 't3'), S('i2', '大武紅外線站', 't3')]);
+  const errors = await bootWith(page, [S('r1', '松岡雷達站', 't1'), S('r2', '丹楓雷達站', 't1'), S('r3', '青石岬雷達站', 't1'),
+    S('r4', '白浦港區雷達站', 't2'), S('r5', '柳汀雷達站', 't1'), S('r6', '北嶼雷達站', 't1'), S('r7', '南灣港區雷達站', 't2'),
+    S('i1', '松岡紅外線站', 't3'), S('i2', '丹楓紅外線站', 't3')]);
   const r = await page.evaluate(() => {
     const R = readGroup(['截止至23日2340時，受薔琵颱風影響，相關設備情形說明如下：', '一、雷達（10）：',
-      '（一）正常運作（2）：林口、大武', '（二）待機（3）：鵝鑾、蘇澳港、七股', '（三）關機（1）：東引、高雄港',
-      '二、紅外線（2）：林口及大武紅外線均正常運作。'].join('\n'));
+      '（一）正常運作（2）：松岡、丹楓', '（二）待機（3）：青石、白浦港、柳汀', '（三）關機（1）：北嶼、南灣港',
+      '二、紅外線（2）：松岡及丹楓紅外線均正常運作。'].join('\n'));
     const nm = id => (DB.stations.find(s => s.id === id) || {}).name || '';
     const a = R.items[0].asOf ? new Date(R.items[0].asOf) : null;
     return { got: R.items.map(it => `${it.sid ? nm(it.sid) : '?' + it.cand}:${it.status}`), asOf: a && [a.getDate(), a.getHours(), a.getMinutes()],
-      // 「港區」是通用字：「高雄港」不能因為「港區」兩個字對到蘇澳港區；單一個字（甲）對不到就交給人確認
+      // 「港區」是通用字：「南灣港」不能因為「港區」兩個字對到白浦港區；單一個字（甲）對不到就交給人確認
       generic: gFuzzy('港區', 't2'), one: gFuzzy('甲', 't1') };
   });
-  expect(r.got).toEqual(['林口雷達站:on', '大武雷達站:on', '鵝鑾鼻雷達站:standby', '蘇澳港區雷達站:standby', '七股雷達站:standby',
-    '東引雷達站:off', '高雄港區雷達站:off', '林口紅外線站:on', '大武紅外線站:on']);
+  expect(r.got).toEqual(['松岡雷達站:on', '丹楓雷達站:on', '青石岬雷達站:standby', '白浦港區雷達站:standby', '柳汀雷達站:standby',
+    '北嶼雷達站:off', '南灣港區雷達站:off', '松岡紅外線站:on', '丹楓紅外線站:on']);
   expect(r.asOf).toEqual([23, 23, 40]);
   expect([r.generic, r.one]).toEqual([null, null]);
   expect(errors).toEqual([]);
@@ -2086,8 +2086,8 @@ test('路徑頁：「各站臺風級」正上方有第二條播放條，跟地�
   expect(errors).toEqual([]);
 });
 
-/* ── 分項報告的時間、單位、請查明（使用者的兩份實際範例：三隊報告、中部分署報告） ── */
-const R3 = `三隊報告
+/* ── \u5206項報告的時間、單位、請查明（使用者的兩份實際格式；站名是代號，單位用字跳脫——repo 公開） ── */
+const R3 = `三\u968a報告
 截止至24日1010時，受薔琵颱風影響，相關設備情形說明如下：
 一、雷達（10）：
 （一）正常運作（3）：Aa、bb、cc
@@ -2097,13 +2097,13 @@ const R3 = `三隊報告
 二、紅外線（2）：kk及ll紅外線均正常運作。
 
 三、jj雷達停電案，因自昨（23）日2324時jj雷達站因發電機供電達10小時，故將發電機停機2小時，雷達設備已於1000時完成關機，並由雷達組同仁完成油料補充，以上報告。`;
-const RC = `中部分署報告：
+const RC = `中部\u5206\u7f72報告：
 因應「薔琵」颱風，實施預警性關、待機作業，計(7)處：
-一、岸際雷達關機情形如下：
-（一）第四巡防區(關機1處)：
+一、\u5cb8際雷達關機情形如下：
+（一）第四\u5de1\u9632\u5340(關機1處)：
 1.xx雷達站（10月22日1715時關機）
 
-（二）第五巡防區(關機1處、待機(0)處）：
+（二）第五\u5de1\u9632\u5340(關機1處、待機(0)處）：
 1.ww雷達站（10月22日1100時開機，由發電機供電）
 2.ss雷達站（10月22日2000時關機）
 二、彌補雷達站（待機1處）：
@@ -2112,7 +2112,8 @@ const RC = `中部分署報告：
 1.tt雷達
 2.uu雷達
 3.yy雷達
-四、本分署賡續管制雷達復機及運作情形。`;
+四、本\u5206\u7f72賡續管制雷達復機及運作情形。`;
+const UA = '三\u968a', UB = '四\u968a';                 // 預設對照表：UA＝第四…、UB＝第五…
 const TW8 = (d, hm) => new Date(`2026-10-${d}T${hm.slice(0, 2)}:${hm.slice(2)}:00+08:00`).getTime();
 const ST3 = (prior, unit = '') => {
   const mk = (n, type, status, at) => ({ id: n, name: n + (type === 't3' ? '紅外線站' : '雷達站'), type, status, at, hum: null, note: '', unit });
@@ -2137,11 +2138,11 @@ async function pasteReport(page, text) {
   });
 }
 
-test('三隊報告：截止時間不蓋掉沒變的站；jj 用第三點寫的 1000；名冊裡有、報告沒提到的列進「請查明」', async ({ page }) => {
+test('名冊式報告：截止時間不蓋掉沒變的站；jj 用第三點寫的 1000；名冊裡有、報告沒提到的列進「請查明」', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-10-24T10:30:00+08:00'));
-  const errors = await bootWith(page, ST3(true, '三隊'), { ty: PLACEHOLDER });
+  const errors = await bootWith(page, ST3(true, UA), { ty: PLACEHOLDER });
   const r = await pasteReport(page, R3);
-  expect(r.units).toEqual(['三隊']);
+  expect(r.units).toEqual([UA]);
   expect(r.rows['ee雷達站']).toBe('same off 10-23 15:00 last');             // 狀態沒變：不改成 1010
   expect(r.rows['dd雷達站']).toBe('same standby 10-23 22:00 last');
   expect(r.rows['Aa雷達站']).toBe('same on 10-23 08:00 last');
@@ -2157,7 +2158,7 @@ test('三隊報告：截止時間不蓋掉沒變的站；jj 用第三點寫的 1
   expect(errors).toEqual([]);
 });
 
-test('三隊報告：狀態變了又沒寫時間——先找之前報告明寫的時間，都沒有才用截止時間並列進請查明；標題數量對不上也列', async ({ page }) => {
+test('名冊式報告：狀態變了又沒寫時間——先找之前報告明寫的時間，都沒有才用截止時間並列進請查明；標題數量對不上也列；名單沒\u5206單位的直接歸過去', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-10-24T10:30:00+08:00'));
   const errors = await bootWith(page, ST3(false), { ty: PLACEHOLDER });
   // 之前貼過一則明寫時間的訊息（沒有套用）
@@ -2170,52 +2171,64 @@ test('三隊報告：狀態變了又沒寫時間——先找之前報告明寫�
   const chk = page.locator('.chk-card');
   await expect(chk).toContainText('5 站狀態變了、報告沒寫幾點改的，先用截止時間 10/24 10:10');
   await expect(chk).toContainText('寫 11 處，底下列了 10 處');
-  // 還沒分單位：一顆鈕把報告裡的站歸到三隊
-  await expect(page.locator('#impUnit')).toHaveText('把這 12 站歸到報告寫的單位');
-  await page.locator('#impUnit').click();
-  expect(await page.evaluate(() => DB.stations.filter(s => s.unit === '三隊').length)).toBe(12);
+  // 使用者：單位不要一站一站填——報告寫了單位，名單上還沒\u5206的直接歸過去，不用按鈕
+  await expect(page.locator('#toast')).toHaveText('依報告把 12 站歸到單位');
+  expect(await page.evaluate(u => DB.stations.filter(s => s.unit === u).length, UA)).toBe(12);
   await expect(page.locator('#impUnit')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
-test('中部分署報告：標題、發電機清單、結語不當成站；巡防區照對照表歸到隊；新站帶時間與單位', async ({ page }) => {
+test('彙整報告：標題、發電機清單、結語不當成站；段落寫的單位照對照表歸；新站帶時間與單位', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-10-24T10:30:00+08:00'));
-  const errors = await bootWith(page, [{ id: 'z', name: 'zz雷達站', type: 't1', status: 'on', unit: '三隊' }], { ty: PLACEHOLDER });
+  const errors = await bootWith(page, [{ id: 'z', name: 'zz雷達站', type: 't1', status: 'on', unit: UA }], { ty: PLACEHOLDER });
   const r = await pasteReport(page, RC);
-  expect(r.units).toEqual(['三隊', '四隊']);                               // 第四巡防區＝三隊、第五巡防區＝四隊
-  expect(r.ask).toEqual(['xx雷達站 off 10-22 17:15 三隊', 'ww雷達站 on 10-22 11:00 四隊',
-    'ss雷達站 off 10-22 20:00 四隊', 'qq彌補雷達站 standby 10-20 16:00 ']);  // 「二、彌補雷達站」不沿用上一段的巡防區
+  expect(r.units).toEqual([UA, UB]);                                        // 兩個段落各自照對照表歸到 UA、UB
+  expect(r.ask).toEqual([`xx雷達站 off 10-22 17:15 ${UA}`, `ww雷達站 on 10-22 11:00 ${UB}`,
+    `ss雷達站 off 10-22 20:00 ${UB}`, 'qq彌補雷達站 standby 10-20 16:00 ']);  // 「二、彌補雷達站」不沿用上一段的單位
   expect(r.ev).toEqual(['雷達站由發電機供電計3處：tt雷達、uu雷達、yy雷達。']);
-  expect(r.other).toContain('四、本分署賡續管制雷達復機及運作情形。');
+  expect(r.other).toContain('四、本\u5206\u7f72賡續管制雷達復機及運作情形。');
   expect(r.roster).toBe(false);                                             // 只列關、待機：沒提到的不算「減少」
-  await expect(page.locator('#impBody .imp-ex')).toContainText('（一）第四巡防區(關機1處)：');   // 兩份範例放進「認得的寫法」
-  await expect(page.locator('#impBody .imp-ex')).toContainText('三隊報告');
+  await expect(page.locator('#impBody .imp-ex')).toContainText('（一）第四\u5de1\u9632\u5340(關機1處)：');   // 兩份範例放進「認得的寫法」
+  await expect(page.locator('#impBody .imp-ex')).toContainText('三\u968a報告');
   await expect(page.locator('.chk-card')).not.toContainText('減少');
   // 確認成新站：單位跟著報告
   await page.evaluate(() => { IMP.ask.forEach(a => pasteFix(a.key, { name: a.cand, type: a.type, status: a.status, at: a.at, hum: null })); refreshImp();
     applyPaste(IMP.rows.filter(x => x.kind === 'new')); });
   expect(await page.evaluate(() => Object.fromEntries(DB.stations.map(s => [s.name, s.unit || ''])))).toEqual(
-    { zz雷達站: '三隊', xx雷達站: '三隊', ww雷達站: '四隊', ss雷達站: '四隊', qq彌補雷達站: '' });
+    { zz雷達站: UA, xx雷達站: UA, ww雷達站: UB, ss雷達站: UB, qq彌補雷達站: '' });
   expect(errors).toEqual([]);
 });
 
-test('站臺所屬單位：編輯填「第四巡防區」存成三隊；卡片標單位；單位下拉篩選；同轄區對照可改', async ({ page }) => {
-  const errors = await bootWith(page, [NEAR, { ...NEAR, id: 'n2', name: '第二站' }]);
+test('站臺所屬單位：編輯填同轄\u5340的另一種寫法存成代表名；卡片標單位；單位下拉篩選；對照表可改', async ({ page }) => {
+  const errors = await bootWith(page, [NEAR, { ...NEAR, id: 'n2', name: '第二站', lat: 30, lng: 130 }]);
   await toEq(page);
   await page.locator('.st[data-id="n1"] [data-edit]').click();
-  await page.locator('#f_unit').fill('第四巡防區');
+  await page.locator('#f_unit').fill('第四\u5de1\u9632\u5340');
   await page.locator('#f_save').click();
-  expect(await page.evaluate(() => DB.stations[0].unit)).toBe('三隊');
-  await expect(page.locator('.st[data-id="n1"] .unitlb')).toHaveText('三隊');
-  await expect(page.locator('#uSel option')).toHaveText(['全部單位', '三隊／四巡（1）', '未分單位']);
-  await page.locator('#uSel').selectOption('三隊');
+  expect(await page.evaluate(() => DB.stations[0].unit)).toBe(UA);
+  await expect(page.locator('.st[data-id="n1"] .unitlb')).toHaveText(UA);
+  await expect(page.locator('#uSel option')).toHaveText(['全部單位', '三\u968a／四\u5de1（1）', '未\u5206單位']);
+  await page.locator('#uSel').selectOption(UA);
   await expect(page.locator('.st')).toHaveCount(1);
   await page.locator('#uSel').selectOption('-');
   await expect(page.locator('.st[data-id="n2"]')).toBeVisible();
   await expect(page.locator('.st')).toHaveCount(1);
-  // 對照表加一種寫法：「第三岸巡隊」也歸三隊
-  await page.evaluate(() => { DB.cfg.unitEq = '三隊＝四巡＝第3岸巡隊\n四隊＝五巡'; });
-  expect(await page.evaluate(() => [unitKey('第三岸巡隊'), unitKey('3隊'), unitKey('五巡'), unitLabel('三隊')]))
-    .toEqual(['三隊', '三隊', '四隊', '三隊／四巡']);
+  await page.evaluate(() => { DB.cfg.unitEq = '三\u968a＝四\u5de1＝第3\u5cb8\u5de1\u968a\n四\u968a＝五\u5de1'; });
+  expect(await page.evaluate(() => [unitKey('第三\u5cb8\u5de1\u968a'), unitKey('3\u968a'), unitKey('五\u5de1'), unitLabel('三\u968a')]))
+    .toEqual([UA, UA, UB, '三\u968a／四\u5de1']);
+  expect(errors).toEqual([]);
+});
+
+test('沒填單位的站依位置推估：40 km 內最近的已知單位站；卡片標「?」、篩選算進去；太遠的不推', async ({ page }) => {
+  const S = (id, name, lat, lng, unit = '') => ({ ...NEAR, id, name, lat, lng, unit });
+  const errors = await bootWith(page, [S('a', '甲站', 24.0, 120.5, UA), S('b', '乙站', 24.1, 120.55), S('c', '丙站', 25.5, 121.9)]);
+  await toEq(page);
+  await expect(page.locator('.st[data-id="b"] .unitlb')).toHaveText(UA + '?');
+  await expect(page.locator('.st[data-id="b"] .unitlb')).toHaveClass(/guess/);
+  await expect(page.locator('.st[data-id="b"] .unitlb')).toHaveAttribute('title', /依 甲站 12 km 推估/);
+  await expect(page.locator('.st[data-id="c"] .unitlb')).toHaveCount(0);
+  await expect(page.locator('#uSel option')).toHaveText(['全部單位', '三\u968a／四\u5de1（2）', '未\u5206單位']);
+  await page.locator('.st[data-id="b"] [data-edit]').click();
+  await expect(page.locator('#sheet')).toContainText(`依 甲站（12 km）推估是 ${UA}`);
   expect(errors).toEqual([]);
 });

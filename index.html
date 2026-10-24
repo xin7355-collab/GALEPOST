@@ -513,6 +513,7 @@ details.more>.hint{margin-top:0.25rem}
 .chk-card .btn{margin-top:0.625rem}
 .imp-ex{margin:0.5rem 0 0;padding:0.625rem;border-radius:0.5rem;background:var(--bg2);font:0.75rem/1.6 var(--mono);color:var(--fg3);white-space:pre-wrap;overflow-wrap:anywhere}
 .st-n em.unitlb{color:var(--acc);border-color:rgba(111,211,255,.45)}
+.st-n em.unitlb.guess{border-style:dashed;opacity:.8}
 .ok-it{display:block;width:100%;text-align:left;font:inherit;color:inherit;padding:0.4375rem 0;border-top:1px solid var(--edge)}
 .ok-it:first-of-type{margin-top:0.5rem}
 .ok-it:active{background:var(--surf2)}
@@ -1849,7 +1850,7 @@ const CWA_BASE = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 /* 版本字串,要跟 sw.js 的 CACHE 對得上。
    離線快取是「快取優先」,裝過一次之後使用者可能整整幾天都在跑舊版,
    而畫面上完全看不出來 —— 設定頁把版本印出來,並給一顆手動更新的按鈕。 */
-const APP_VER = 'v79';
+const APP_VER = 'v81';
 const GDACS_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP';
 const MIN_GAP = 60000;                       // 手動更新最短間隔，防止連點造成請求風暴
 let _last = 0, _busy = false, _autoT = null;
@@ -4188,11 +4189,11 @@ function renderStations() {
   /* 自用監看（中繼站臺）用**獨立的開關**,不跟類別篩選同步 ——
      它不是「另一種類別」,而是「要不要把不列入交接的那些也放進來看」。
      做成類別鈕的話,按下去就會把其他類別關掉,那不是使用者要的。 */
-  // 單位篩選：有站分了單位才出現（使用者：各站要分隊、巡防區）；選的單位後來沒站了就回到全部
-  const uKeys = [...new Set(DB.stations.map(s => unitKey(s.unit)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+  // 單位篩選：有站分了單位才出現（含依位置推估的）；選的單位後來沒站了就回到全部
+  const uKeys = [...new Set(DB.stations.map(s => unitOf(s).k).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hant'));
   if (fUnit !== 'all' && fUnit !== '-' && !uKeys.includes(fUnit)) fUnit = 'all';
   const list = sortStations(DB.stations.filter(s =>
-    (fUnit === 'all' || (fUnit === '-' ? !s.unit : unitKey(s.unit) === fUnit))
+    (fUnit === 'all' || (fUnit === '-' ? !unitOf(s).k : unitOf(s).k === fUnit))
     && (fType === 'all' || s.type === fType)
     && (inReport(s) || fAux)
     && (fStatus === 'all' ? s.status !== 'plan'
@@ -4231,8 +4232,8 @@ function renderStations() {
       : '未設座標'}</span></div>
   ${ctlLine()}
   ${uKeys.length ? `<div class="fbar">${sel('uSel', '篩選單位', [['all', '全部單位']].concat(uKeys.map(k =>
-    [k, `${unitLabel(k)}（${DB.stations.filter(s => unitKey(s.unit) === k).length}）`]),
-    DB.stations.some(s => !s.unit) ? [['-', '未分單位']] : []), fUnit)}</div>` : ''}
+    [k, `${unitLabel(k)}（${DB.stations.filter(s => unitOf(s).k === k).length}）`]),
+    DB.stations.some(s => !unitOf(s).k) ? [['-', '未分單位']] : []), fUnit)}</div>` : ''}
   <div class="fbar">${sel('fSel', '篩選站臺', fOpts, fCur)}${sel('sSel', '排序', Object.entries(SORT_LABEL), DB.cfg.sort || 'ns')}
     <button class="btn sm" onclick="openStation(null)">＋ 新增</button></div>
 
@@ -4293,8 +4294,8 @@ function stationCard(s, imp, i, total) {
       <i class="st-i" style="background:${aux ? 'var(--aux)' : S_COL[s.status]}"></i>
       ${wr.bf != null ? bfBadge(wr.bf, 'md') : ''}
       <div class="st-b">
-        <div class="st-n"><span class="nm">${esc(s.name)}</span><em>${esc(t.label)}</em>${s.unit
-          ? `<em class="unitlb" title="${esc(unitLabel(unitKey(s.unit)))}">${esc(unitKey(s.unit))}</em>` : ''}${aux
+        <div class="st-n"><span class="nm">${esc(s.name)}</span><em>${esc(t.label)}</em>${(u => u.k
+          ? `<em class="unitlb${u.guess ? ' guess' : ''}" title="${esc(unitLabel(u.k))}${u.guess ? `（依 ${esc(u.from)} ${u.km} km 推估）` : ''}">${esc(u.k)}${u.guess ? '?' : ''}</em>` : '')(unitOf(s))}${aux
           ? '<em class="auxlb" title="自用監看：不進交接通報、不計入戰力">自用監看</em>' : ''}</div>
         <div class="st-m">${meta.map(x => `<span>${x}</span>`).join('')}</div>
         ${wl.length ? `<div class="st-w">${wl.join('')}${wr.bf != null ? `<span class="wl wtop">待機判斷取最高：${wr.src} ${wr.bf} 級</span>` : ''}</div>` : ''}
@@ -5071,7 +5072,7 @@ const DGPA_NONE_RE = /無停班停課訊息|無停止上班上課|尚無停班�
        <FONT color=#FF0000>明天停止上班、停止上課。</FONT> … </TD>
    紅字（#FF0000）＝有停班停課,藍字（#000080）＝照常。
    最後一列是備註,只有一個 colspan 的 TD,沒有 city_Name,自然會被略過。
-   縣市以外的細項（「蘇澳鎮南強里:今天晚上06:00起…」）原樣保留 ——
+   縣市以外的細項（「○○鎮○○里:今天晚上06:00起…」）原樣保留 ——
    那正是值班的人要看的那一行,不能只留縣市層級的結論。            */
 function parseDgpaHtml(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -8895,22 +8896,22 @@ function generate() {
    （同一句不再問、教過的寫法下次自動認）。
    兩段式不變：判讀與比對完先給人看,勾選後才寫入站臺（貼錯一段文字不能把管制盤蓋掉）。 */
 const nameKey = n => cnorm(n).replace(/[\s　]+/g, '');
-/* ── 所屬單位（隊／巡防區）────────────────────────────────
-   使用者：各站要分是哪一隊、哪個巡防區；報告上「三隊」跟「第四巡防區」是同一個轄區（四隊＝五巡）,
-   兩種寫法都會出現,要歸成同一個單位。對照表在「設定 › 單位與回報用語」,預設就是使用者給的這兩組。
-   站臺上存同一組的代表名（第一個）,寫「四巡」「第四巡防區」「第3岸巡隊」都會歸到同一個。 */
-const UNIT_EQ_DEF = '三隊＝四巡\n四隊＝五巡';
-const UNIT_PAT = '第?[一二三四五六七八九十0-9]{1,3}(?:岸巡)?隊|第?[一二三四五六七八九十0-9]{1,3}巡防區|[一二三四五六七八九十]{1,3}巡(?![邏查視])';
+/* ── 所屬單位 ─────────────────────────────────────────────
+   使用者：各站要分是哪個單位；同一個轄區在報告上有兩種寫法（例如「甲＝乙」）,要歸成同一個。
+   對照表在「設定 › 單位與回報用語」。單位用字一律寫成 \u 跳脫字元：repo 是公開的,
+   使用者不想讓人用搜尋或掃一眼就看出是哪些單位。站臺上存同一組的代表名（第一個）。 */
+const UNIT_EQ_DEF = '三\u968a＝四\u5de1\n四\u968a＝五\u5de1';
+const UNIT_PAT = '第?[一二三四五六七八九十0-9]{1,3}(?:\u5cb8\u5de1)?\u968a|第?[一二三四五六七八九十0-9]{1,3}\u5de1\u9632\u5340|[一二三四五六七八九十]{1,3}\u5de1(?![邏查視])';
 function cnNum(n) {
   const d = '〇一二三四五六七八九';
   return n < 10 ? d[n] : n === 10 ? '十' : n < 20 ? '十' + d[n - 10] : d[Math.floor(n / 10)] + '十' + (n % 10 ? d[n % 10] : '');
 }
 function unitNorm(v) {
   const x = gNorm(v).replace(/\d{1,2}/g, d => cnNum(+d)).replace(/^第/, '');
-  let m = x.match(/^([一二三四五六七八九十]{1,3})(?:岸巡)?隊$/);
-  if (m) return m[1] + '隊';
-  m = x.match(/^([一二三四五六七八九十]{1,3})巡(?:防區)?$/);
-  return m ? m[1] + '巡' : x;
+  let m = x.match(/^([一二三四五六七八九十]{1,3})(?:\u5cb8\u5de1)?\u968a$/);
+  if (m) return m[1] + '\u968a';
+  m = x.match(/^([一二三四五六七八九十]{1,3})\u5de1(?:\u9632\u5340)?$/);
+  return m ? m[1] + '\u5de1' : x;
 }
 let _ug = null, _ugSrc = null;
 function unitGroups() {
@@ -8924,10 +8925,25 @@ function unitGroups() {
   return _ug;
 }
 function unitKey(v) { const x = v ? unitNorm(v) : ''; return x ? unitGroups().get(x) || x : ''; }
-// 篩選、提示用的全名：「三隊／四巡」——讓人知道兩種寫法是同一個
+// 篩選、提示用的全名：「甲／乙」——讓人知道兩種寫法是同一個
 function unitLabel(k) {
   const al = [...unitGroups()].filter(([, v]) => v === k).map(([x]) => x);
   return al.length > 1 ? al.join('／') : k;
+}
+/* 沒填單位的站用位置推：使用者說單位看地點就知道,不用一站一站填。
+   程式裡沒有、也不能放各單位的轄區資料（repo 公開）,所以拿名單裡已知單位、有座標的站當參考：
+   40 km 內最近那一站是哪個單位,就推估是哪個。標「推估」,站臺手動填或報告寫了就以那個為準。 */
+const UNIT_NEAR_KM = 40;
+function unitOf(s) {
+  if (s.unit) return { k: unitKey(s.unit), guess: false };
+  if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return { k: '', guess: false };
+  let best = null, bd = UNIT_NEAR_KM;
+  for (const o of DB.stations) {
+    if (o === s || !o.unit || !Number.isFinite(o.lat) || !Number.isFinite(o.lng)) continue;
+    const d = distKm(s, o);
+    if (d <= bd) { bd = d; best = o; }
+  }
+  return best ? { k: unitKey(best.unit), guess: true, from: best.name, km: Math.round(bd) } : { k: '', guess: false };
 }
 // 區塊標題要整行就是「一、岸際雷達3處：」：事件句裡出現「處理」不能被當成標題整行跳過
 const HDR_RE = /^\s*[一二三四五六七八九十]+\s*[、.．]\s*(.+?)(?:計)?\s*\d*\s*處\s*[:：]?\s*$/;
@@ -9008,8 +9024,8 @@ function gHums(s) {
   return out;
 }
 /* 站名比對用的鍵：全名、使用者教過的別名、去掉「雷達站／站」的簡稱（群組裡常只寫地名）。
-   兩站簡稱撞名就不用簡稱,免得認錯站。長的先比,「林口二站」不會被「林口」吃掉。 */
-// 簡稱一層一層去尾綴：「林口雷達站」→「林口雷達」「林口」。「林口」跟林口站撞名就不用,「林口雷達」照樣認得
+   兩站簡稱撞名就不用簡稱,免得認錯站。長的先比,「甲地二站」不會被「甲地」吃掉。 */
+// 簡稱一層一層去尾綴：「甲地雷達站」→「甲地雷達」「甲地」。「甲地」跟甲地站撞名就不用,「甲地雷達」照樣認得
 const G_SUF = ['雷達站', '紅外線站', '監控站', '中繼站', '基地台', '站台', '雷達', '紅外線', '站'];
 function gKeys() {
   const m = new Map(), base = new Map();
@@ -9025,9 +9041,9 @@ function gKeys() {
   for (const [b, sid] of base) if (sid) m.set(b, sid);
   return [...m].map(([k, sid]) => ({ k, sid })).sort((a, b) => b.k.length - a.k.length);
 }
-/* 各單位簡寫不一（「鵝鑾」「蘇澳港」「七股站」）：使用者的規則——名字裡有連續 2 個字跟某一站一樣就算那一站。
+/* 各單位簡寫不一（「甲角」「乙港」「丙站」）：使用者的規則——名字裡有連續 2 個字跟某一站一樣就算那一站。
    「雷達」「紅外線」「港區」「站」這種每站都有的字先換掉再比,不然所有雷達站都會互相對到；
-   一樣長的有兩站（林口雷達站、林口紅外線站）就看這一段是哪一類（「一、雷達：」「二、紅外線：」）；還分不出來回 null,交給人確認。 */
+   一樣長的有兩站（甲地雷達站、甲地紅外線站）就看這一段是哪一類（「一、雷達：」「二、紅外線：」）；還分不出來回 null,交給人確認。 */
 const G_GENERIC = /港區|港口|雷達|紅外線|紅外|監控|中繼|基地台|基地|站台|站臺|站|台|臺/g;
 const gBase = k => { let b = k, x;
   while ((x = G_SUF.find(t => b.endsWith(t) && b.length > t.length))) b = b.slice(0, -x.length);
@@ -9136,7 +9152,7 @@ function gSeg(s, ctx, keys) {
     else if (!at) why.push('notime');
     const base = { status: fin ? fin.st : '', at, atFrom, hum: h ? h.v : null };
     const pre = m.slice(g.i, fin ? fin.i : g.end);
-    // gi／si（第幾組、組裡第幾站）拿來當這一句的記號：教過寫法之後「大武」從新站名變成林口站,
+    // gi／si（第幾組、組裡第幾站）拿來當這一句的記號：教過寫法之後「乙地」從新站名變成甲地站,
     // 記號不能跟著變,不然你在確認面板改過的時間、狀態會被丟掉
     if (g.sts.length) {
       g.sts.forEach((x, si) => out.push(Object.assign({}, base, { sid: x.sid, cand: '', why, gi: k, si })));
@@ -9187,7 +9203,7 @@ function listItems(li, line, ctx, keys) {
   });
 }
 const typeOfTitle = title => {
-  const t = title.replace(/^(本分署|本單位|尚未開機|已復機|目前)+/g, '').replace(/計$/, '');
+  const t = title.replace(/^(本\u5206\u7f72|本單位|尚未開機|已復機|目前)+/g, '').replace(/計$/, '');
   if (!t || /^(站[臺台]|待機站[臺台])$/.test(t)) return '';           // 「已復機站臺」這種沒講類別的,沿用上一個區塊
   const x = DB.types.find(y => t.includes(y.report) || t.includes(y.label) || y.report.includes(t) || y.label.includes(t));
   return x ? x.id : '';
@@ -9195,7 +9211,7 @@ const typeOfTitle = title => {
 /* 整段文字 → 回報清單。認得 LINE 匯出的日期行（2026/10/23（五））與訊息開頭（08:30<tab>王小明<tab>內容）、
    「王小明：內容」、正式回報的區塊標題（一、岸際雷達3處：→ 新站臺的類別）。一行裡用「。；」分句。 */
 /* 事件句：停電案、發電機供電、設備故障這類要照原文帶進回報稿的（使用者選「加一段事件，原文帶入」）。
-   短句（「林口站斷電0830」）只是狀態回報,不算事件；要有「案」或夠長才算。 */
+   短句（「甲地站斷電0830」）只是狀態回報,不算事件；要有「案」或夠長才算。 */
 const EVENT_RE = /停電|跳電|斷電|故障|異常|發電機|漏水|淹水|進水|倒塌|損壞|受損|中斷|失聯|斷訊/;
 const evText = t => {
   let x = String(t || '').trim().replace(/^(\d+|[一二三四五六七八九十]+)\s*[.、．)）]\s*/, '')
@@ -9203,10 +9219,10 @@ const evText = t => {
   if (x && !/[。！]$/.test(x)) x += '。';
   return x;
 };
-// 單位標題：「三隊報告」「（一）第四巡防區(關機1處)：」「第五巡防區：」——之後的站都算這個單位的
+// 單位標題：「○○報告」「（一）○○(關機1處)：」——寫的是單位名稱時,之後的站都算這個單位的
 const UNIT_HDR = new RegExp(`^(?:[(（][一二三四五六七八九十\\d]{1,3}[)）]|[一二三四五六七八九十]+[、.])?(${UNIT_PAT})(?:報告|回報)?(?:如下)?(?:[(（].*[)）])?:?$`);
-// 結語、例行句：「四、本分署賡續管制雷達復機及運作情形。」裡的「復機」不是哪一站復機了
-const BOILER_RE = /^(?:[一二三四五六七八九十]+[、.])?(?:本分署|本隊|本單位|各單位|各隊)?(?:賡續|持續|繼續|隨時)/;
+// 結語、例行句：「四、本單位賡續管制雷達復機及運作情形。」裡的「復機」不是哪一站復機了
+const BOILER_RE = /^(?:[一二三四五六七八九十]+[、.])?(?:本\u5206\u7f72|本\u968a|本單位|各單位|各\u968a)?(?:賡續|持續|繼續|隨時)/;
 // 標題寫的處數：「雷達（10）」「正常運作（3）」取最後一個括號數字
 const cntOf = v => { const m = String(v).match(/[(（](\d{1,3})[)）][^(（]*$/); return m ? +m[1] : null; };
 const NUM_ITEM = /^\s*(?:\d+|[一二三四五六七八九十]+)\s*[.、．)）]\s*/;
@@ -9233,8 +9249,8 @@ function readGroup(text) {
     const n = gNorm(line);
     let x = n.match(/^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})(?:[(（].[)）]|星期.|週.)?$/);
     if (x) { ctx.date = { y: +x[1], M: +x[2], D: +x[3] }; ctx.msgAt = 0; ctx.sender = ''; continue; }
-    /* 單位的範圍：沒編號的「三隊報告」管整份；「（一）第四巡防區」只管到下一個「二、…」大標題為止——
-       中部分署報告的「二、彌補雷達站」不是第五巡防區的,不能沿用上一段的單位。 */
+    /* 單位的範圍：沒編號的「○○報告」管整份；「（一）○○」只管到下一個「二、…」大標題為止——
+       彙整報告的「二、彌補雷達站」不屬於上一段的單位,不能沿用。 */
     const top = /^[一二三四五六七八九十]+[、.]/.test(n);
     const uh = n.match(UNIT_HDR);
     if (uh && !gStations(n, keys).length) {
@@ -9264,7 +9280,7 @@ function readGroup(text) {
     }
     /* 其他標題行（整行冒號結尾、沒有站名、沒有時間）：「一、岸際雷達關機情形如下：」「二、彌補雷達站（待機1處）：」
        「因應…颱風，實施預警性關、待機作業，計(7)處：」——是下面清單的標題,不是回報。
-       以前會被讀成一個叫「岸際雷達」「一第四巡防區」的新站臺跳出來問。 */
+       以前會被讀成一個叫「岸際雷達」「一○○」的新站臺跳出來問。 */
     if (/:$/.test(n) && !gStations(n, keys).length && !gTimes(n).length) {
       closeSec();
       const t = typeOfTitle(n.replace(/^(?:[一二三四五六七八九十]+[、.]|[(（][一二三四五六七八九十\d]{1,3}[)）])/, '')
@@ -9373,7 +9389,7 @@ function pasteDiff(text) {
     }
     (it.why.length ? ask : ok).push(it);
   }
-  /* 同一站好幾句：狀態一樣時,句子裡明寫的時間勝過推來的（三隊報告的清單寫 jj 關機、只有截止時間 1010；
+  /* 同一站好幾句：狀態一樣時,句子裡明寫的時間勝過推來的（清單寫 jj 關機、只有截止時間 1010；
      第三點寫「雷達設備已於1000時完成關機」→ 用 1000）。狀態不同就取最新的。 */
   const explicit = x => x.src === 'fix' || x.atFrom === 'text' || x.atFrom === 'msg';
   const by = new Map();
@@ -9403,10 +9419,10 @@ function pasteDiff(text) {
   const cur = new Set(rows.map(r => nameKey(r.name)));
   const cmp = base ? { add: rows.filter(r => !r.was), chg: rows.filter(r => r.was && r.fresh),
     gone: prev.filter(p => !cur.has(nameKey(p.name))) } : null;
-  /* 使用者：新增或減少的單位要挑出來查明。報告寫了單位（「三隊報告」「第四巡防區」）就只比那個單位的站；
-     名單還沒分單位時比全部。只列關、待機的報告（分署彙整常這樣）沒提到多半是照常運作,
+  /* 使用者：新增或減少的單位要挑出來查明。報告寫了單位就只比那個單位的站（含依位置推估的）；
+     名單還沒分單位時比全部。只列關、待機的報告（上級彙整常這樣）沒提到多半是照常運作,
      有列「正常運作」的才是完整名冊——roster 為真時沒提到的站才算「減少」、放進請查明。 */
-  const us = R.units || [], inU = s => us.includes(unitKey(s.unit));
+  const us = R.units || [], inU = s => us.includes(unitOf(s).k);
   const pool = DB.stations.filter(s => IS_LIVE(s) && inReport(s));
   const scoped = us.length && pool.some(inU) ? pool.filter(inU) : pool;
   const missing = scoped.filter(s => !cur.has(nameKey(s.name)));
@@ -9434,6 +9450,11 @@ function pasteRemember(text, D) {
   }
   const ks = Object.keys(K);
   if (ks.length > 600) ks.sort((a, b) => K[a].t - K[b].t).slice(0, ks.length - 600).forEach(k => delete K[k]);
+}
+function autoUnits(D) {
+  const ua = (D.unassigned || []).filter(r => r.ex && !r.ex.unit);
+  ua.forEach(r => { r.ex.unit = r.it.unit; r.ex.mt = Date.now(); });
+  return ua.length;
 }
 function pasteFix(key, v) {
   const F = (DB.paste || (DB.paste = {})).fix || (DB.paste.fix = {});
@@ -9597,7 +9618,7 @@ function impResHtml(D) {
     ${otherHtml(D)}`;
 }
 /* 請查明（使用者：新增或減少的單位要挑出來讓我查明）：報告有、名單沒有；名冊式報告沒提到的；
-   標題處數對不上；名單上別的單位卻寫在這份；狀態變了卻只有截止時間。還沒分單位的站給一顆鈕一次歸好。 */
+   標題處數對不上；名單上別的單位卻寫在這份；狀態變了卻只有截止時間。還沒分單位的站比對時就自動歸（autoUnits）。 */
 function chkHtml(D, T) {
   const L = [], nm = a => [...new Set(a)].map(esc).join('、');
   const ul = D.units.map(unitLabel).join('、');
@@ -9611,11 +9632,8 @@ function chkHtml(D, T) {
     `${esc(r.name)} 名單上是${esc(unitLabel(unitKey(r.ex.unit)))}，報告寫在${esc(unitLabel(r.it.unit))}`).join('；')}`);
   if (D.asof.length) L.push(`<b class="c-acc">時間</b>　${D.asof.length} 站狀態變了、報告沒寫幾點改的，先用截止時間 ${T(D.asof[0].at)}（實際只會更早）：${
     nm(D.asof.map(r => r.name))}——在下方「判讀成功的資料」點那一筆可以改`);
-  const ua = D.unassigned;
-  if (!L.length && !ua.length) return '';
-  return `<div class="card pad chk-card"><b>${L.length ? `請查明 ${L.length} 項` : '單位'}</b>${L.map(x => `<p>${x}</p>`).join('')}
-    ${ua.length ? `<p>${ua.length} 站還沒分單位，這份寫在${esc(nm(ua.map(r => unitLabel(r.it.unit))))}：${nm(ua.map(r => r.name))}</p>
-      <button class="btn wide" id="impUnit">把這 ${ua.length} 站歸到報告寫的單位</button>` : ''}</div>`;
+  if (!L.length) return '';
+  return `<div class="card pad chk-card"><b>請查明 ${L.length} 項</b>${L.map(x => `<p>${x}</p>`).join('')}</div>`;
 }
 // 事件句：勾選的列入回報稿「事件」段（原文，可先改字）
 function evHtml(D) {
@@ -9693,27 +9711,27 @@ function aliasHtml() {
     `<div class="al-row"><span>${k[0] === '@' ? `${esc(k.slice(1))} 沒寫站名的回報` : `「${esc(k)}」`} → ${nm(sid)}</span>
       <button type="button" class="act" data-unalias="${esc(k)}">刪除</button></div>`).join('')}</div>`;
 }
-// 認得的寫法裡的範例（使用者提供的兩份實際格式,站名已換成代號）
-const IMP_EX = [`三隊報告
+// 認得的寫法裡的範例（使用者提供的兩份實際格式,站名已換成代號,單位用字跳脫）
+const IMP_EX = [`三\u968a報告
 截止至24日1010時，受○○颱風影響，相關設備情形說明如下：
 一、雷達（10）：
 （一）正常運作（3）：Aa、bb、cc
 （二）待機（1）：dd
 （三）關機（6）：ee、ff、gg、hh、ii、jj
 二、紅外線（2）：kk及ll紅外線均正常運作。
-三、jj雷達停電案，…雷達設備已於1000時完成關機，以上報告。`, `中部分署報告：
+三、jj雷達停電案，…雷達設備已於1000時完成關機，以上報告。`, `中部\u5206\u7f72報告：
 因應「○○」颱風，實施預警性關、待機作業，計(7)處：
 一、岸際雷達關機情形如下：
-（一）第四巡防區(關機1處)：
+（一）第四\u5de1\u9632\u5340(關機1處)：
 1.xx雷達站（10月22日1715時關機）
-（二）第五巡防區(關機1處、待機(0)處）：
+（二）第五\u5de1\u9632\u5340(關機1處、待機(0)處）：
 1.ww雷達站（10月22日1100時開機，由發電機供電）
 2.ss雷達站（10月22日2000時關機）
 二、彌補雷達站（待機1處）：
 1.qq彌補雷達站（10月20日1600時待機）
 三、雷達站由發電機供電計3處：
 1.tt雷達
-四、本分署賡續管制雷達復機及運作情形。`];
+四、本\u5206\u7f72賡續管制雷達復機及運作情形。`];
 function renderImp() {
   const box = document.getElementById('impBody');
   if (!box) return;
@@ -9735,8 +9753,8 @@ function renderImp() {
         「完成雷達開機並切換為待機模式」算待機、「紅外線正常運作」算開機。沒寫時間的：LINE 聊天紀錄用訊息時間，名單裡的站沿用該站最後紀錄的時間（標「沿用最後時間」，點一下可改）。
         看不懂的、名單裡沒有的、「預計」「尚未」這種會跳出來問你；確認時可以勾「記住」，下次自動認得。<br>
         <b>分項報告</b>：「截止至24日1010時」是整份的截止時間，不會蓋掉每一站的時間——狀態沒變的沿用原本時間；
-        變了的先找之前報告明寫的時間，都沒有才暫用截止時間並列進「請查明」。報告開頭的「三隊報告」、段落的「（一）第四巡防區」
-        會記成單位（同一轄區照設定的對照表歸成同一個），報告有、名單沒有的，名冊式報告沒提到的，標題處數對不上的，都列在「請查明」。</div>
+        變了的先找之前報告明寫的時間，都沒有才暫用截止時間並列進「請查明」。報告開頭、段落標題寫的單位
+        會記下來，報告裡的站自動歸到那個單位（同一轄區照設定的對照表歸成同一個；沒填的站依位置推估），報告有、名單沒有的，名冊式報告沒提到的，標題處數對不上的，都列在「請查明」。</div>
         <details class="more"><summary>範例</summary><pre class="imp-ex">${esc(IMP_EX.join('\n\n────────\n\n'))}</pre></details>${aliasHtml()}</details>
     </div>
     <div id="impRes">${IMP ? impResHtml(IMP) : ''}</div>`;
@@ -9778,6 +9796,9 @@ function goImp() {
       if (!t) return toast('請先貼上回報文字');
       (DB.paste || (DB.paste = {})).draft = ta.value;
       IMP = pasteDiff(t);
+      // 報告寫了單位、名單上還沒分的站直接歸過去（使用者：單位不要我一站一站填）；寫錯的不蓋,留在請查明
+      const nu = autoUnits(IMP);
+      if (nu) { IMP = pasteDiff(t); renderStations(); toast(`依報告把 ${nu} 站歸到單位`); }
       pasteRemember(t, IMP);
       save(); renderImp();
       const r = document.getElementById('impRes');
@@ -9800,11 +9821,6 @@ function goImp() {
       DB.events = (DB.events || []).concat(pick.map(x => ({ id: uid(), key: x.key, text: x.text, at: x.at || Date.now() })));
       save(); generate(); refreshImp();
       toast(`已列入回報稿 ${pick.length} 句事件`);
-    } else if (id === 'impUnit' && IMP) {
-      const ua = IMP.unassigned.filter(r => r.ex && !r.ex.unit);
-      ua.forEach(r => { r.ex.unit = r.it.unit; r.ex.mt = Date.now(); });
-      save(); renderStations(); refreshImp();
-      toast(`已把 ${ua.length} 站歸到報告寫的單位`);
     } else if (id === 'impApply') {
       const pick = [...box.querySelectorAll('[data-dif]:checked')].map(c => IMP.rows[+c.dataset.dif]).filter(Boolean);
       if (!pick.length) return;
@@ -9859,10 +9875,10 @@ function openStation(id) {
       </select></label></div>
     <label class="fld"><span class="lb">狀態變更時間</span>
       <input type="datetime-local" id="f_at" value="${toInput(s ? s.at : Date.now())}"></label>
-    <label class="fld"><span class="lb">所屬單位（隊／巡防區）</span>
-      <input type="text" id="f_unit" value="${esc(s && s.unit ? s.unit : '')}" list="f_units" placeholder="例：三隊、第四巡防區" autocomplete="off">
+    <label class="fld"><span class="lb">所屬單位</span>
+      <input type="text" id="f_unit" value="${esc(s && s.unit ? s.unit : '')}" list="f_units" placeholder="留空：貼報告時自動歸、或依位置推估" autocomplete="off">
       <datalist id="f_units">${[...new Set(DB.stations.map(x => unitKey(x.unit)).filter(Boolean))].map(k => `<option value="${esc(k)}">`).join('')}</datalist>
-      <span class="sub">同一轄區的不同寫法（三隊＝四巡）會歸成同一個，對照在「設定 › 單位與回報用語」。</span></label>
+      <span class="sub">同一轄區的不同寫法會歸成同一個，對照在「設定 › 單位與回報用語」。${s && !s.unit && unitOf(s).k ? `目前依 ${esc(unitOf(s).from)}（${unitOf(s).km} km）推估是 ${esc(unitOf(s).k)}。` : ''}</span></label>
     <label class="fld"><span class="lb">座標　萬用輸入</span>
       <input type="text" id="f_ll" value="${s && Number.isFinite(s.lat) ? `${s.lat}, ${s.lng}` : ''}"
         placeholder="24.2534, 120.5123　或　24°15'12&quot;N 120°30'44&quot;E">
@@ -10128,11 +10144,11 @@ function renderSettings() {
   <div class="sec"><h2>單位與回報用語</h2></div>
   <div class="card pad">
     <label class="fld"><span class="lb">單位名稱</span>
-      <input type="text" id="c_unit" value="${esc(c.unit)}" placeholder="例：○○分署">
-      <span class="sub">回報開頭寫成「○○分署報告：」；留空不加。</span></label>
+      <input type="text" id="c_unit" value="${esc(c.unit)}" placeholder="例：○○單位">
+      <span class="sub">回報開頭寫成「○○單位報告：」；留空不加。</span></label>
     <label class="fld"><span class="lb">同一轄區的寫法</span>
-      <textarea id="c_unitEq" rows="3" placeholder="三隊＝四巡">${esc(c.unitEq ?? UNIT_EQ_DEF)}</textarea>
-      <span class="sub">一行一組，用＝隔開。報告寫「第四巡防區」或「三隊」都歸到同一個單位；站臺的單位、貼上比對都照這張表。</span></label>
+      <textarea id="c_unitEq" rows="3" placeholder="甲＝乙">${esc(c.unitEq ?? UNIT_EQ_DEF)}</textarea>
+      <span class="sub">一行一組，用＝隔開。同一組的寫法在報告裡都歸到同一個單位；站臺的單位、貼上比對都照這張表。</span></label>
     <label class="fld"><span class="lb">初報起始語句</span>
       <input type="text" id="c_introA" value="${esc(c.introA)}">
       <span class="sub"><code>{颱風}</code> 換成颱風名稱；<code>{海上警報}</code>、<code>{陸上警報}</code> 換成官方發布時間（結語也能用）。</span></label>

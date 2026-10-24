@@ -9,7 +9,7 @@
  * 這裡刻意不做 retry:Service Worker 只是轉手,重試由頁面端的 getJSON 負責
  * （429／5xx 退避）。兩層都重試的話,一次失敗會被放大成好幾倍的請求。
  */
-const CACHE = 'galepost-v79';
+const CACHE = 'galepost-v81';
 const SHELL = [
   './',
   './index.html',
