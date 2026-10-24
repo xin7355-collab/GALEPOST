@@ -69,7 +69,8 @@
 ## 7. 本專案資訊（每個專案自己填）
 - 用途：見 `index.html`（單檔 PWA、可離線）。這裡不寫用途：repo 是公開的。
 - 主要檔案：`index.html`（整支程式）、`sw.js`（快取版本 `CACHE` 要跟 `APP_VER` 一起升）、
-  `scripts/fetch_lightning.py`、`scripts/fetch_typhoon.py` + `.github/workflows/cwa.yml`（氣象署後端，每 10 分鐘寫 `data/lightning.json`、`data/typhoon.json`；颱風檔只存原始 records＋警報單逐報紀錄 warnLog＋侵襲機率等值區（W-C0034-003 KMZ 解析後簡化），解析只在前端一份；GitHub 排程實際 3～5 小時才跑一次，外部觸發的設定步驟已打包給使用者，不放 repo）、
+  `scripts/fetch_lightning.py`、`scripts/fetch_typhoon.py` + `.github/workflows/cwa.yml`（氣象署後端，每 10 分鐘寫 `data/lightning.json`、`data/typhoon.json`；颱風檔只存原始 records＋警報單逐報紀錄 warnLog＋侵襲機率等值區（W-C0034-003 KMZ 解析後簡化），解析只在前端一份；GitHub 排程實際 3～5 小時才跑一次，外部觸發的設定步驟已打包給使用者，不放 repo；
+  第一步 `scripts/fetch_gate.py` 決定要不要抓：有颱風、特報、落雷每輪抓，沒事 30 分鐘一次，上次抓的時間用 actions/cache 帶）、
   `scripts/fetch_dgpa.py`（同一個 cwa.yml 一起跑，人事行政總處停班停課頁切成 `data/dgpa.json`，前端即時轉發抓不到時的退路）、
   `scripts/fetch_wx.py`（同一個 cwa.yml，雨量＋陣風＋豪大雨雷雨特報＋縣市預報寫 `data/wx.json`，沒填個人授權碼的同事靠它看雨量陣風預報、出門建議與站臺豪雨紀錄）、
   `scripts/build_tyhist.py` + `.github/workflows/tyhist.yml`（每週從 IBTrACS 建 `data/tyhist.json`，名牌的「今年／歷史第幾強」）、
